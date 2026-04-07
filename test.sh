@@ -91,6 +91,16 @@ echo ""
 echo "=== Basic VAD web integration tests ==="
 go test -v -timeout 60s ./tests/basic-vad-web/
 
+# --- Step 7: Run scripts ---
+
+echo ""
+echo "=== cmd/pkg-example/run.sh ==="
+bash cmd/pkg-example/run.sh
+
+echo ""
+echo "=== cmd/basic-vad-web/run.sh (CI mode) ==="
+CI=1 bash cmd/basic-vad-web/run.sh
+
 # --- Done ---
 
 echo ""

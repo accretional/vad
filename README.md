@@ -1,6 +1,16 @@
 # vad
 Pyannote Segmentation 3.0 via ONNX and accretional/openvino-go as a remote grpc service (and weight server for transformers.js)
 
+## Development Rules
+
+**IMPORTANT: No one-off commands.** All tests, builds, and setup steps MUST go through their respective scripts:
+- **Testing**: Add to `test.sh`, then run `./test.sh`. Never run `go test` directly as a final validation.
+- **Building**: Add to `build.sh` or the `Dockerfile`. Never run `go build` or `docker build` ad-hoc as a final step.
+- **Setup**: Add to `setup.sh`. Never install dependencies or download artifacts outside of it.
+- **Running demos**: Use the `run.sh` scripts in each `cmd/` directory.
+
+If something needs to be tested or built, it belongs in a script. If it's not in a script, it doesn't count as tested.
+
 ## Plan
 
 1. Check out the transformers.js usage of onnx-community/pyannote-segmentation-3.0 in https://huggingface.co/onnx-community/pyannote-segmentation-3.0#transformersjs-v3-usage. Note the original model is in https://huggingface.co/pyannote/segmentation-3.0 and we may need to end up implementing pipelining (though the onnx example docs suggest >10s in their output so it may include that?). Create a setup.sh that will be used to host all setup scripts for those who clone this repo and try to build and run what we are about to build. Start with something that checks if docker is installed. Then create a Dockerfile that takes golang-1.26.1-alpine3.23, adds onnx weights from weights/ to the filesystem under /weights, builds a golang binary against a parameterized main.go, then strips eveverything from the built binary into a container  from SCRATCH. Make sure that all works and that any necessary setup outside of the dockerfile is in the setup script

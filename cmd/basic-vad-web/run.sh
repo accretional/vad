@@ -112,17 +112,21 @@ fi
 echo ""
 echo "=== All checks passed ==="
 
-# --- Open browser ---
+# --- Open browser (skip in CI mode) ---
 
-echo "Opening $URL in browser..."
-if command -v open &>/dev/null; then
-    open "$URL"
-elif command -v xdg-open &>/dev/null; then
-    xdg-open "$URL"
+if [ "${CI:-}" = "1" ] || [ "${1:-}" = "--ci" ]; then
+    echo "CI mode — skipping browser open."
 else
-    echo "  (no browser opener found, visit $URL manually)"
-fi
+    echo "Opening $URL in browser..."
+    if command -v open &>/dev/null; then
+        open "$URL"
+    elif command -v xdg-open &>/dev/null; then
+        xdg-open "$URL"
+    else
+        echo "  (no browser opener found, visit $URL manually)"
+    fi
 
-echo ""
-echo "Press Ctrl+C to stop the server."
-wait "$SERVER_PID"
+    echo ""
+    echo "Press Ctrl+C to stop the server."
+    wait "$SERVER_PID"
+fi
