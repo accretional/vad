@@ -7,14 +7,18 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+    <div class="timer-bar">
+        <span id="timer-text">Closing in 25s</span>
+        <button id="timer-pause">Pause</button>
+    </div>
     <div class="container">
         <h1>Voice Activity Detection</h1>
         <p class="subtitle">Pyannote Segmentation 3.0 via ONNX</p>
 
         <div class="upload-section">
             <label for="audio-file" class="upload-label">
-                <span id="upload-text">Select an audio file (16kHz mono f32le PCM)</span>
-                <input type="file" id="audio-file" accept=".f32,.pcm,.raw,.wav">
+                <span id="upload-text">Select an audio file (.mp3, .wav, .ogg, .f32)</span>
+                <input type="file" id="audio-file" accept=".mp3,.wav,.ogg,.flac,.f32,.pcm,.raw">
             </label>
             <button id="detect-btn" disabled>Detect Speech</button>
         </div>
@@ -37,6 +41,7 @@
                         <th>Duration (s)</th>
                         <th>Speaker</th>
                         <th>Confidence</th>
+                        <th>Play</th>
                     </tr>
                 </thead>
                 <tbody></tbody>

@@ -81,12 +81,14 @@ If something needs to be tested or built, it belongs in a script. If it's not in
 <details><summary>Implementation Notes</summary>
 
 - `cmd/basic-vad-web/main.go`: dual gRPC/HTTP server on a single port using `h2c` (HTTP/2 cleartext). Routes `application/grpc` requests to gRPC server, everything else to HTTP mux. Serves embedded static files and `/api/detect` endpoint.
-- `cmd/basic-vad-web/static/`: embedded via `go:embed` — `index.html` (file upload UI), `style.css` (responsive styling with speaker color-coding), `app.js` (fetch-based API client with results table rendering).
-- `/api/detect`: accepts raw float32 PCM bytes via POST, returns JSON with segments array and duration.
+- `cmd/basic-vad-web/static/`: embedded via `go:embed` — `index.html`, `style.css`, `app.js`.
+- `/api/detect`: accepts raw float32 PCM bytes via POST, returns JSON with segments array and duration. All audio decoding (MP3/WAV/OGG → 16kHz mono float32) is done client-side via Web Audio API.
+- Client-side audio processing: `AudioContext.decodeAudioData()` handles any browser-supported format, `OfflineAudioContext` resamples to 16kHz mono. Segmented chunks are played back via in-browser WAV synthesis from float32 slices.
+- UI features: file upload with drag-and-drop styling, results table with speaker color-coding, per-segment Play buttons, 25-second auto-close countdown timer (sticky header bar with red Pause/Resume button).
 - `cmd/basic-vad-web/main_test.go`: 4 unit tests validating embedded static files (index.html content, CSS rules, JS endpoints, file count).
 - `tests/basic-vad-web/web_test.go`: 6 e2e tests — builds binary, starts local server, validates HTTP responses for HTML/CSS/JS serving, 404 handling, and API inference on silence.
-- `cmd/basic-vad-web/run.sh`: builds binary, starts server, validates all endpoints via curl, opens browser with `open` command, waits for Ctrl+C.
-- `test.sh` updated to include basic-vad-web unit and integration tests.
+- `cmd/basic-vad-web/run.sh`: builds binary, starts server, validates all endpoints via curl, opens browser (skips in CI mode), waits for Ctrl+C.
+- `test.sh` updated to include basic-vad-web unit and integration tests, plus run.sh scripts in CI mode.
 
 </details>
 

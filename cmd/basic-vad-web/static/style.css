@@ -9,8 +9,8 @@ body {
 
 .container {
     max-width: 900px;
-    margin: 2rem auto;
-    padding: 0 1rem;
+    margin: 0 auto;
+    padding: 1rem 1rem 2rem;
 }
 
 h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
@@ -109,3 +109,35 @@ tr:hover { background: #f8f9fa; }
 .speaker-0 { color: #007bff; font-weight: 600; }
 .speaker-1 { color: #dc3545; font-weight: 600; }
 .speaker-2 { color: #28a745; font-weight: 600; }
+
+.timer-bar {
+    position: sticky;
+    top: 0;
+    background: #343a40;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    z-index: 1000;
+}
+
+.timer-bar button {
+    background: #dc3545;
+    padding: 0.3rem 1rem;
+    font-size: 0.85rem;
+    border-radius: 3px;
+}
+
+.timer-bar button:hover { background: #c82333; }
+
+.play-btn {
+    background: #28a745;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.8rem;
+    border-radius: 3px;
+}
+
+.play-btn:hover:not(:disabled) { background: #218838; }
