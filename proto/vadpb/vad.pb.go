@@ -204,6 +204,128 @@ func (x *Segment) GetConfidence() float32 {
 	return 0
 }
 
+// FetchRequest requests the ONNX model weights.
+type FetchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchRequest) Reset() {
+	*x = FetchRequest{}
+	mi := &file_vad_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchRequest) ProtoMessage() {}
+
+func (x *FetchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_vad_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchRequest.ProtoReflect.Descriptor instead.
+func (*FetchRequest) Descriptor() ([]byte, []int) {
+	return file_vad_proto_rawDescGZIP(), []int{3}
+}
+
+// FetchResponse returns model weights either directly or as a URL.
+type FetchResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Result:
+	//
+	//	*FetchResponse_Weights
+	//	*FetchResponse_Url
+	Result        isFetchResponse_Result `protobuf_oneof:"result"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchResponse) Reset() {
+	*x = FetchResponse{}
+	mi := &file_vad_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchResponse) ProtoMessage() {}
+
+func (x *FetchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_vad_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchResponse.ProtoReflect.Descriptor instead.
+func (*FetchResponse) Descriptor() ([]byte, []int) {
+	return file_vad_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *FetchResponse) GetResult() isFetchResponse_Result {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *FetchResponse) GetWeights() []byte {
+	if x != nil {
+		if x, ok := x.Result.(*FetchResponse_Weights); ok {
+			return x.Weights
+		}
+	}
+	return nil
+}
+
+func (x *FetchResponse) GetUrl() string {
+	if x != nil {
+		if x, ok := x.Result.(*FetchResponse_Url); ok {
+			return x.Url
+		}
+	}
+	return ""
+}
+
+type isFetchResponse_Result interface {
+	isFetchResponse_Result()
+}
+
+type FetchResponse_Weights struct {
+	// The raw ONNX model bytes.
+	Weights []byte `protobuf:"bytes,1,opt,name=weights,proto3,oneof"`
+}
+
+type FetchResponse_Url struct {
+	// A URL where the model can be downloaded.
+	Url string `protobuf:"bytes,2,opt,name=url,proto3,oneof"`
+}
+
+func (*FetchResponse_Weights) isFetchResponse_Result() {}
+
+func (*FetchResponse_Url) isFetchResponse_Result() {}
+
 var File_vad_proto protoreflect.FileDescriptor
 
 const file_vad_proto_rawDesc = "" +
@@ -223,10 +345,16 @@ const file_vad_proto_rawDesc = "" +
 	"speaker_id\x18\x03 \x01(\x05R\tspeakerId\x12\x1e\n" +
 	"\n" +
 	"confidence\x18\x04 \x01(\x02R\n" +
-	"confidence2;\n" +
+	"confidence\"\x0e\n" +
+	"\fFetchRequest\"I\n" +
+	"\rFetchResponse\x12\x1a\n" +
+	"\aweights\x18\x01 \x01(\fH\x00R\aweights\x12\x12\n" +
+	"\x03url\x18\x02 \x01(\tH\x00R\x03urlB\b\n" +
+	"\x06result2k\n" +
 	"\x11VoiceSegmentation\x12&\n" +
 	"\x06Detect\x12\n" +
-	".vad.Audio\x1a\x10.vad.DiarizationB(Z&github.com/accretional/vad/proto/vadpbb\x06proto3"
+	".vad.Audio\x1a\x10.vad.Diarization\x12.\n" +
+	"\x05Fetch\x12\x11.vad.FetchRequest\x1a\x12.vad.FetchResponseB(Z&github.com/accretional/vad/proto/vadpbb\x06proto3"
 
 var (
 	file_vad_proto_rawDescOnce sync.Once
@@ -240,18 +368,22 @@ func file_vad_proto_rawDescGZIP() []byte {
 	return file_vad_proto_rawDescData
 }
 
-var file_vad_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_vad_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_vad_proto_goTypes = []any{
-	(*Audio)(nil),       // 0: vad.Audio
-	(*Diarization)(nil), // 1: vad.Diarization
-	(*Segment)(nil),     // 2: vad.Segment
+	(*Audio)(nil),         // 0: vad.Audio
+	(*Diarization)(nil),   // 1: vad.Diarization
+	(*Segment)(nil),       // 2: vad.Segment
+	(*FetchRequest)(nil),  // 3: vad.FetchRequest
+	(*FetchResponse)(nil), // 4: vad.FetchResponse
 }
 var file_vad_proto_depIdxs = []int32{
 	2, // 0: vad.Diarization.segments:type_name -> vad.Segment
 	0, // 1: vad.VoiceSegmentation.Detect:input_type -> vad.Audio
-	1, // 2: vad.VoiceSegmentation.Detect:output_type -> vad.Diarization
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
+	3, // 2: vad.VoiceSegmentation.Fetch:input_type -> vad.FetchRequest
+	1, // 3: vad.VoiceSegmentation.Detect:output_type -> vad.Diarization
+	4, // 4: vad.VoiceSegmentation.Fetch:output_type -> vad.FetchResponse
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -262,13 +394,17 @@ func file_vad_proto_init() {
 	if File_vad_proto != nil {
 		return
 	}
+	file_vad_proto_msgTypes[4].OneofWrappers = []any{
+		(*FetchResponse_Weights)(nil),
+		(*FetchResponse_Url)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_vad_proto_rawDesc), len(file_vad_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -19,6 +19,7 @@ func main() {
 	port := flag.Int("port", 50051, "gRPC server port")
 	modelPath := flag.String("model", "weights/model.onnx", "path to ONNX model")
 	libPath := flag.String("lib", "", "path to ONNX Runtime shared library (or set ONNXRUNTIME_LIB)")
+	weightsURL := flag.String("weights-url", "", "URL to return from Fetch RPC instead of raw weights")
 	flag.Parse()
 
 	ortLib := *libPath
@@ -45,8 +46,11 @@ func main() {
 		log.Fatalf("Failed to listen on port %d: %v", *port, err)
 	}
 
-	grpcServer := grpc.NewServer()
-	pb.RegisterVoiceSegmentationServer(grpcServer, server.New(model))
+	grpcServer := grpc.NewServer(
+		grpc.MaxSendMsgSize(32*1024*1024),
+		grpc.MaxRecvMsgSize(32*1024*1024),
+	)
+	pb.RegisterVoiceSegmentationServer(grpcServer, server.New(model, *modelPath, *weightsURL))
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)

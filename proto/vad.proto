@@ -9,6 +9,10 @@ option go_package = "github.com/accretional/vad/proto/vadpb";
 service VoiceSegmentation {
   // Detect processes raw audio and returns speaker-diarized segments.
   rpc Detect(Audio) returns (Diarization);
+
+  // Fetch returns the ONNX model weights, either as raw bytes or as a
+  // redirect URL if the server is configured with a weight URL.
+  rpc Fetch(FetchRequest) returns (FetchResponse);
 }
 
 // Audio contains raw PCM audio data for voice activity detection.
@@ -42,4 +46,18 @@ message Segment {
 
   // Confidence score for this segment (0.0 - 1.0).
   float confidence = 4;
+}
+
+// FetchRequest requests the ONNX model weights.
+message FetchRequest {}
+
+// FetchResponse returns model weights either directly or as a URL.
+message FetchResponse {
+  oneof result {
+    // The raw ONNX model bytes.
+    bytes weights = 1;
+
+    // A URL where the model can be downloaded.
+    string url = 2;
+  }
 }

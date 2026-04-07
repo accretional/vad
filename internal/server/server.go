@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"os"
 
 	"github.com/accretional/vad/pkg/vad"
 	pb "github.com/accretional/vad/proto/vadpb"
@@ -14,12 +15,16 @@ import (
 // Server implements the VoiceSegmentation gRPC service.
 type Server struct {
 	pb.UnimplementedVoiceSegmentationServer
-	model *vad.Model
+	model      *vad.Model
+	weightsURL string
+	modelPath  string
 }
 
 // New creates a new Server with the given VAD model.
-func New(model *vad.Model) *Server {
-	return &Server{model: model}
+// weightsURL is optional — if set, Fetch returns it instead of the raw weights.
+// modelPath is needed to read weights from disk when weightsURL is empty.
+func New(model *vad.Model, modelPath string, weightsURL string) *Server {
+	return &Server{model: model, modelPath: modelPath, weightsURL: weightsURL}
 }
 
 // Detect processes raw audio and returns speaker-diarized segments.
@@ -59,6 +64,24 @@ func (s *Server) Detect(ctx context.Context, req *pb.Audio) (*pb.Diarization, er
 	return &pb.Diarization{
 		Segments: pbSegments,
 		Duration: duration,
+	}, nil
+}
+
+// Fetch returns the ONNX model weights or a URL to download them.
+func (s *Server) Fetch(ctx context.Context, req *pb.FetchRequest) (*pb.FetchResponse, error) {
+	if s.weightsURL != "" {
+		return &pb.FetchResponse{
+			Result: &pb.FetchResponse_Url{Url: s.weightsURL},
+		}, nil
+	}
+
+	data, err := os.ReadFile(s.modelPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to read model weights: %v", err)
+	}
+
+	return &pb.FetchResponse{
+		Result: &pb.FetchResponse_Weights{Weights: data},
 	}, nil
 }
 

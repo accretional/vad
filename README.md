@@ -54,6 +54,18 @@ Pyannote Segmentation 3.0 via ONNX and accretional/openvino-go as a remote grpc 
 
 5. Add a Fetch RPC to VoiceSegmentation that returns the model weights themselves, or optionally, a url configured as a CLI flag (if the URL is unconfigured, return the weights directly). Add a basic integration test validating the weights are returned properly in tests/fetch/
 
+<details><summary>Implementation Notes</summary>
+
+- `proto/vad.proto`: added `Fetch(FetchRequest) returns (FetchResponse)` RPC with `oneof result { bytes weights; string url; }`.
+- `internal/server/server.go`: implements Fetch — returns URL if `-weights-url` is configured, otherwise reads and returns raw model bytes from disk.
+- `cmd/vad/main.go`: added `-weights-url` flag and bumped gRPC max message size to 32MB (model is ~6MB, exceeds default 4MB limit).
+- `tests/fetch/fetch_test.go`: two tests — `TestFetchWeightsDirect` (no URL, expects ~6MB raw bytes) and `TestFetchWeightsURL` (with `-weights-url https://huggingface.co/onnx-community/pyannote-segmentation-3.0/resolve/main/onnx/model.onnx`, expects URL string). Uses separate containers on ports 50052/50053.
+- `test.sh`: orchestrates full test suite — go vet, unit tests, Docker build (`--no-cache`), e2e tests, fetch tests. Auto-detects ORT library path.
+- `.dockerignore`: added `third_party/`, `debug/`, `*.f32` to reduce context size (142MB → 33MB).
+- Dockerfile: switched to `golang:1.26.1-bookworm` builder + `debian:bookworm-slim` runtime (ONNX Runtime requires glibc). Architecture-aware ORT download via `uname -m`.
+
+</details>
+
 6. Add a cmd/basic-vad-web in which go/embed is used to serve index.html and accompanying css/js, and a dual grpc/http service (use essentially the same impl as https://github.com/accretional/katarche/tree/main/server) is used to implement VAD, for a basic web app that allows the user to select an audio file in their browser, send it to the VAD service, and visualize the segmented outputs (can be minimally processed, just the raw output in a table or something).
 
 7. Use https://github.com/accretional/cdp-agent with https://github.com/accretional/chromerpc to test that server in tests/basic-vad-web by uploading an actual file. The agent should simply set up the automation by doing it manually at first, then using the structure of the web app/lower level chromerpc capabilities to programmatically upload the audio file without requiring vision in some automation like https://github.com/accretional/chromerpc/blob/main/automations/screenshot_site.textproto (but it can use a bash script and more than one automation textproto if necessary).

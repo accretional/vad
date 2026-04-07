@@ -2,3 +2,6 @@
 .DS_Store
 data/screenshots
 data/benchmarks
+third_party/
+debug/
+*.f32

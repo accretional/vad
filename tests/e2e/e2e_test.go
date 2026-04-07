@@ -3,7 +3,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	containerName = "vad-e2e-test"
+	containerName = "vad-test-e2e"
 	imageName     = "vad"
 	containerPort = "50051"
 )
@@ -30,32 +29,17 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	repoRoot := findRepoRoot()
-
-	// Build the Docker image
-	fmt.Println("Building Docker image...")
-	build := exec.Command("docker", "build", "-t", imageName,
-		"--build-arg", "MAIN_PKG=./cmd/vad", repoRoot)
-	build.Stdout = os.Stdout
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Docker build failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Stop any previous container
+	// Stop any previous container on our port
 	exec.Command("docker", "rm", "-f", containerName).Run()
 
-	// Run the container with port mapping
-	fmt.Println("Starting container...")
+	// Run the pre-built container with port mapping
 	run := exec.Command("docker", "run", "--rm", "-d",
 		"--name", containerName,
 		"-p", containerPort+":"+containerPort,
 		imageName)
 	out, err := run.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Docker run failed: %v\n%s\n", err, out)
-		os.Exit(1)
+		panic("Docker run failed (did you run test.sh or build the image first?): " + string(out))
 	}
 
 	// Wait for the server to be ready
@@ -81,20 +65,15 @@ func TestMain(m *testing.M) {
 		c.Close()
 	}
 	if !ready {
-		cleanup()
-		fmt.Fprintln(os.Stderr, "Failed to connect to container after 30s")
-		os.Exit(1)
+		exec.Command("docker", "stop", containerName).Run()
+		panic("Failed to connect to container after 30s")
 	}
 
 	code := m.Run()
 
 	conn.Close()
-	cleanup()
-	os.Exit(code)
-}
-
-func cleanup() {
 	exec.Command("docker", "stop", containerName).Run()
+	os.Exit(code)
 }
 
 func findRepoRoot() string {
@@ -115,7 +94,7 @@ func findRepoRoot() string {
 func loadF32(path string) []byte {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		panic(fmt.Sprintf("failed to load %s: %v", path, err))
+		panic("failed to load " + path + ": " + err.Error())
 	}
 	return data
 }

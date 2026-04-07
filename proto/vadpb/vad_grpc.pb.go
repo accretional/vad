@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	VoiceSegmentation_Detect_FullMethodName = "/vad.VoiceSegmentation/Detect"
+	VoiceSegmentation_Fetch_FullMethodName  = "/vad.VoiceSegmentation/Fetch"
 )
 
 // VoiceSegmentationClient is the client API for VoiceSegmentation service.
@@ -31,6 +32,9 @@ const (
 type VoiceSegmentationClient interface {
 	// Detect processes raw audio and returns speaker-diarized segments.
 	Detect(ctx context.Context, in *Audio, opts ...grpc.CallOption) (*Diarization, error)
+	// Fetch returns the ONNX model weights, either as raw bytes or as a
+	// redirect URL if the server is configured with a weight URL.
+	Fetch(ctx context.Context, in *FetchRequest, opts ...grpc.CallOption) (*FetchResponse, error)
 }
 
 type voiceSegmentationClient struct {
@@ -51,6 +55,16 @@ func (c *voiceSegmentationClient) Detect(ctx context.Context, in *Audio, opts ..
 	return out, nil
 }
 
+func (c *voiceSegmentationClient) Fetch(ctx context.Context, in *FetchRequest, opts ...grpc.CallOption) (*FetchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchResponse)
+	err := c.cc.Invoke(ctx, VoiceSegmentation_Fetch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VoiceSegmentationServer is the server API for VoiceSegmentation service.
 // All implementations must embed UnimplementedVoiceSegmentationServer
 // for forward compatibility.
@@ -60,6 +74,9 @@ func (c *voiceSegmentationClient) Detect(ctx context.Context, in *Audio, opts ..
 type VoiceSegmentationServer interface {
 	// Detect processes raw audio and returns speaker-diarized segments.
 	Detect(context.Context, *Audio) (*Diarization, error)
+	// Fetch returns the ONNX model weights, either as raw bytes or as a
+	// redirect URL if the server is configured with a weight URL.
+	Fetch(context.Context, *FetchRequest) (*FetchResponse, error)
 	mustEmbedUnimplementedVoiceSegmentationServer()
 }
 
@@ -72,6 +89,9 @@ type UnimplementedVoiceSegmentationServer struct{}
 
 func (UnimplementedVoiceSegmentationServer) Detect(context.Context, *Audio) (*Diarization, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Detect not implemented")
+}
+func (UnimplementedVoiceSegmentationServer) Fetch(context.Context, *FetchRequest) (*FetchResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Fetch not implemented")
 }
 func (UnimplementedVoiceSegmentationServer) mustEmbedUnimplementedVoiceSegmentationServer() {}
 func (UnimplementedVoiceSegmentationServer) testEmbeddedByValue()                           {}
@@ -112,6 +132,24 @@ func _VoiceSegmentation_Detect_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VoiceSegmentation_Fetch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VoiceSegmentationServer).Fetch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VoiceSegmentation_Fetch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VoiceSegmentationServer).Fetch(ctx, req.(*FetchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VoiceSegmentation_ServiceDesc is the grpc.ServiceDesc for VoiceSegmentation service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -122,6 +160,10 @@ var VoiceSegmentation_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Detect",
 			Handler:    _VoiceSegmentation_Detect_Handler,
+		},
+		{
+			MethodName: "Fetch",
+			Handler:    _VoiceSegmentation_Fetch_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
