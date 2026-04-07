@@ -135,7 +135,15 @@ Phase 4: Validation
 
 <details><summary>Implementation Notes</summary>
 
-(To be filled in as work progresses)
+**Repo research (2026-04-07):**
+
+- **katarche** (public): `server.Run(grpcPort, httpPort, func(s *grpc.Server) { ... })` callback pattern. `gen_go.sh` has 3 phases: rewrite proto `go_package` → run protoc → scan `*_grpc.pb.go` for `RegisterXyzServer()` and auto-generate main.go. `go_pull.sh` imports external protos. HTTP reflection UI via `DiscoverRPCs()`. No grpc-gateway — uses custom reflection-based proxy.
+- **petros** (private): 9+ gRPC services, central `registerServer()` function. Wrapper pattern for external services to avoid method conflicts. Custom `/rpc-proxy/` HTTP bridge. Dual-port (50051 gRPC, 3000 HTTP).
+- **gluon** (public): Go→gRPC codegen via `FullBootstrap()`. AST toolkit (`astkit`). Proto compiler wrapper. Does Go interface→proto (reverse direction from what we need for external service import). The AST toolkit is reusable.
+- **godoc-gen** (private): CLI `godoc-gen -output ./docs [-single] /path/to/repo`. Single main.go (~1070 lines). Generates static HTML via `go/parser` + `go/doc`. Multi-file or single-file mode. Built-in preview server. Styled like pkg.go.dev.
+- **ffmpeg-proto** (private): `MediaConverter` gRPC service with 4 RPCs: `conversion_stream` (bidirectional FFmpeg transforms), `audio_to_vectors` (audio→amplitude vectors), `svg` (vectors→SVG waveform), `svg_to_sqlite` (SVG→vectors). 10 transform types. Typed Go client in `pkg/client/`. Session-based temp files.
+- **audio-visualizer** (private): Same codebase as ffmpeg-proto. Full pipeline: MP3→PCM→vectors→SVG→SQLite.
+- **anyserver** (public): Empty placeholder, now has README with full plan.
 
 </details>
 
