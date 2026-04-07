@@ -17,6 +17,19 @@ Pyannote Segmentation 3.0 via ONNX and accretional/openvino-go as a remote grpc 
 
 2. Get golang onnx inference working using the weights in https://huggingface.co/onnx-community/pyannote-segmentation-3.0/tree/main/onnx (use similar approach to https:// pkg/embedder/cpu/onnx_embedder.go in github.com/accretional/rpcembed/ and ask Rithesh why this isn't using openvino-go) via a Go pkg, write unit tests and a cmd/pkg-example/main.go to demo it on data/sorry-dave.mp3 Use go/embed to bundle the weights into the go binary.
 
+<details><summary>Implementation Notes</summary>
+
+- `pkg/vad/`: pure inference package using `yalue/onnxruntime_go` v1.22.0 with ORT 1.22.0. Takes `[]float32` samples (16kHz mono), returns `[]Segment{Start, End, SpeakerID, Confidence}`. No filesystem access — caller provides audio data.
+- Model outputs log-softmax probabilities across 7 classes: class 0 = no speech, classes 1-6 = speaker IDs. Post-processing applies `exp()` to get probabilities and thresholds at 0.5.
+- `encode-to-16k.sh`: converts `data/*.mp3` to 16kHz mono float32 PCM (`.f32`) via ffmpeg CLI. TODO: replace with `ffmpeg-proto` audio_decode RPC.
+- `internal/audio/load.go`: helper to load `.f32` files, used by tests and CLI.
+- `cmd/pkg-example/main.go`: demo CLI, runs on `data/sorry-dave-16k.f32`, detects 16 segments across 2 speakers.
+- All 3 unit tests pass (silence detection, sorry-dave inference, f32 loading).
+- Dockerfile updated: alpine final stage with ONNX Runtime `.so`, CGO_ENABLED=1. See `RITHESH.md` for openvino-go discussion.
+- `setup.sh` downloads both model weights and ONNX Runtime shared library for local dev.
+
+</details>
+
 3. Define a vad.proto taking Audio inputs and Diarization outputs via a VoiceSegmentation grpc service using this and implement it using the package
 
 4. Write an integration test against the grpc service in tests/e2e
