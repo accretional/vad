@@ -68,6 +68,18 @@ Pyannote Segmentation 3.0 via ONNX and accretional/openvino-go as a remote grpc 
 
 6. Add a cmd/basic-vad-web in which go/embed is used to serve index.html and accompanying css/js, and a dual grpc/http service (use essentially the same impl as https://github.com/accretional/katarche/tree/main/server) is used to implement VAD, for a basic web app that allows the user to select an audio file in their browser, send it to the VAD service, and visualize the segmented outputs (can be minimally processed, just the raw output in a table or something).
 
+<details><summary>Implementation Notes</summary>
+
+- `cmd/basic-vad-web/main.go`: dual gRPC/HTTP server on a single port using `h2c` (HTTP/2 cleartext). Routes `application/grpc` requests to gRPC server, everything else to HTTP mux. Serves embedded static files and `/api/detect` endpoint.
+- `cmd/basic-vad-web/static/`: embedded via `go:embed` — `index.html` (file upload UI), `style.css` (responsive styling with speaker color-coding), `app.js` (fetch-based API client with results table rendering).
+- `/api/detect`: accepts raw float32 PCM bytes via POST, returns JSON with segments array and duration.
+- `cmd/basic-vad-web/main_test.go`: 4 unit tests validating embedded static files (index.html content, CSS rules, JS endpoints, file count).
+- `tests/basic-vad-web/web_test.go`: 6 e2e tests — builds binary, starts local server, validates HTTP responses for HTML/CSS/JS serving, 404 handling, and API inference on silence.
+- `cmd/basic-vad-web/run.sh`: builds binary, starts server, validates all endpoints via curl, opens browser with `open` command, waits for Ctrl+C.
+- `test.sh` updated to include basic-vad-web unit and integration tests.
+
+</details>
+
 7. Use https://github.com/accretional/cdp-agent with https://github.com/accretional/chromerpc to test that server in tests/basic-vad-web by uploading an actual file. The agent should simply set up the automation by doing it manually at first, then using the structure of the web app/lower level chromerpc capabilities to programmatically upload the audio file without requiring vision in some automation like https://github.com/accretional/chromerpc/blob/main/automations/screenshot_site.textproto (but it can use a bash script and more than one automation textproto if necessary).
 
 8. Implement a tests.sh that runs all the integration and unit tests. Make tests/basic-vad-web take screenshots 1s after the page loads and 1s after the final automation and have tests.sh save those to data/screenshots/YYY/MM/DD/basic-vad-web/start.png and data/screenshots/YYY/MM/DD/basic-vad-web/end.png

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VAD - Voice Activity Detection</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Voice Activity Detection</h1>
+        <p class="subtitle">Pyannote Segmentation 3.0 via ONNX</p>
+
+        <div class="upload-section">
+            <label for="audio-file" class="upload-label">
+                <span id="upload-text">Select an audio file (16kHz mono f32le PCM)</span>
+                <input type="file" id="audio-file" accept=".f32,.pcm,.raw,.wav">
+            </label>
+            <button id="detect-btn" disabled>Detect Speech</button>
+        </div>
+
+        <div id="status" class="status hidden"></div>
+
+        <div id="results" class="results hidden">
+            <h2>Results</h2>
+            <div class="summary">
+                <span id="summary-segments"></span>
+                <span id="summary-speakers"></span>
+                <span id="summary-duration"></span>
+            </div>
+            <table id="segments-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Start (s)</th>
+                        <th>End (s)</th>
+                        <th>Duration (s)</th>
+                        <th>Speaker</th>
+                        <th>Confidence</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>

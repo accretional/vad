@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR"
 
 IMAGE_NAME="vad"
 TEST_CONTAINERS="vad-test-e2e vad-test-fetch-direct vad-test-fetch-url"
-TEST_PORTS="50051 50052 50053"
+TEST_PORTS="50051 50052 50053 18080"
 
 # --- Cleanup function ---
 
@@ -64,8 +64,8 @@ go vet ./...
 # --- Step 2: Unit tests ---
 
 echo ""
-echo "=== Unit tests (pkg/...) ==="
-go test -v ./pkg/...
+echo "=== Unit tests ==="
+go test -v ./pkg/... ./cmd/basic-vad-web/
 
 # --- Step 3: Docker build ---
 
@@ -84,6 +84,12 @@ go test -v -timeout 120s ./tests/e2e/
 echo ""
 echo "=== Fetch integration tests ==="
 go test -v -timeout 120s ./tests/fetch/
+
+# --- Step 6: Basic VAD web tests (local server, no Docker) ---
+
+echo ""
+echo "=== Basic VAD web integration tests ==="
+go test -v -timeout 60s ./tests/basic-vad-web/
 
 # --- Done ---
 

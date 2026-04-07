@@ -7,3 +7,4 @@ cmd/pkg-example/pkg-example
 cmd/pkg-example/segmented-output/
 cmd/pkg-example/unsegmented-output/
 cmd/pkg-example/input/
+cmd/basic-vad-web/basic-vad-web
