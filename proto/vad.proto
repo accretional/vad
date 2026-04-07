@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package vad;
+
+option go_package = "github.com/accretional/vad/proto/vadpb";
+
+// VoiceSegmentation performs voice activity detection and speaker diarization
+// on audio input using pyannote segmentation 3.0.
+service VoiceSegmentation {
+  // Detect processes raw audio and returns speaker-diarized segments.
+  rpc Detect(Audio) returns (Diarization);
+}
+
+// Audio contains raw PCM audio data for voice activity detection.
+message Audio {
+  // Raw PCM audio samples as 16kHz mono float32 little-endian bytes.
+  bytes samples = 1;
+
+  // Sample rate in Hz. Must be 16000.
+  int32 sample_rate = 2;
+}
+
+// Diarization contains the detected speaker segments.
+message Diarization {
+  // The detected speech segments with speaker assignments.
+  repeated Segment segments = 1;
+
+  // Total duration of the input audio in seconds.
+  double duration = 2;
+}
+
+// Segment represents a contiguous speech region attributed to a single speaker.
+message Segment {
+  // Start time in seconds from the beginning of the audio.
+  double start = 1;
+
+  // End time in seconds from the beginning of the audio.
+  double end = 2;
+
+  // Speaker identifier (0-indexed).
+  int32 speaker_id = 3;
+
+  // Confidence score for this segment (0.0 - 1.0).
+  float confidence = 4;
+}

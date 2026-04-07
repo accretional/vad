@@ -79,6 +79,51 @@ else
     echo "Downloaded ONNX Runtime to ${ORT_DIR}/${ORT_DIRNAME}/"
 fi
 
+# Check for protoc and Go gRPC plugins (needed to regenerate proto files)
+echo ""
+PROTO_OK=true
+if ! command -v protoc &> /dev/null; then
+    echo "WARNING: protoc is not installed. Needed to regenerate .proto files."
+    echo "  macOS: brew install protobuf"
+    echo "  Linux: apt install -y protobuf-compiler"
+    PROTO_OK=false
+else
+    echo "protoc found: $(protoc --version)"
+fi
+
+if ! command -v protoc-gen-go &> /dev/null; then
+    echo "WARNING: protoc-gen-go not installed."
+    echo "  go install google.golang.org/protobuf/cmd/protoc-gen-go@latest"
+    PROTO_OK=false
+else
+    echo "protoc-gen-go found: $(which protoc-gen-go)"
+fi
+
+if ! command -v protoc-gen-go-grpc &> /dev/null; then
+    echo "WARNING: protoc-gen-go-grpc not installed."
+    echo "  go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest"
+    PROTO_OK=false
+else
+    echo "protoc-gen-go-grpc found: $(which protoc-gen-go-grpc)"
+fi
+
+if [ "$PROTO_OK" = true ]; then
+    echo "All proto tools available. Regenerate with:"
+    echo "  protoc --go_out=proto/vadpb --go_opt=paths=source_relative \\"
+    echo "    --go-grpc_out=proto/vadpb --go-grpc_opt=paths=source_relative \\"
+    echo "    -I=proto proto/vad.proto"
+fi
+
+# Check for ffmpeg (needed for audio encoding)
+if ! command -v ffmpeg &> /dev/null; then
+    echo ""
+    echo "WARNING: ffmpeg is not installed. Needed for audio encoding."
+    echo "  macOS: brew install ffmpeg"
+    echo "  Linux: apt install -y ffmpeg"
+else
+    echo "ffmpeg found: $(ffmpeg -version 2>&1 | head -1)"
+fi
+
 # Print environment setup hint
 ORT_LIB_DIR="$(cd "${ORT_DIR}/${ORT_DIRNAME}/lib" && pwd)"
 echo ""

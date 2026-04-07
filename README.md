@@ -32,7 +32,25 @@ Pyannote Segmentation 3.0 via ONNX and accretional/openvino-go as a remote grpc 
 
 3. Define a vad.proto taking Audio inputs and Diarization outputs via a VoiceSegmentation grpc service using this and implement it using the package
 
+<details><summary>Implementation Notes</summary>
+
+- `proto/vad.proto`: defines `VoiceSegmentation` service with `Detect(Audio) returns (Diarization)` RPC. Audio carries raw float32 PCM bytes + sample rate; Diarization returns repeated Segment (start, end, speaker_id, confidence) + duration.
+- `proto/vadpb/`: generated Go code via `protoc --go_out` and `--go-grpc_out`.
+- `internal/server/server.go`: implements the gRPC service, validates input (sample rate, non-empty, 4-byte aligned), converts bytes→float32, calls `model.ProcessAudio()`, maps results to proto Segments.
+- `cmd/vad/main.go`: gRPC server binary with `-port`, `-model`, `-lib` flags. Graceful shutdown on SIGINT/SIGTERM.
+- `setup.sh` updated: checks for protoc, protoc-gen-go, protoc-gen-go-grpc, and ffmpeg with install instructions.
+
+</details>
+
 4. Write an integration test against the grpc service in tests/e2e
+
+<details><summary>Implementation Notes</summary>
+
+- `tests/e2e/e2e_test.go`: builds Docker image, runs container with port mapping, connects gRPC client, runs 6 tests (silence, sorry-dave with multi-speaker validation, wake-me-up music rejection, invalid sample rate, empty audio, misaligned bytes).
+- Dockerfile fixed: switched from alpine to `debian:bookworm-slim` (ONNX Runtime linux builds require glibc). Builder also uses `golang:1.26.1-bookworm`. Architecture auto-detected via `uname -m` for arm64/x64 ORT download.
+- Container starts, serves gRPC on port 50051, and all tests pass end-to-end.
+
+</details>
 
 5. Add a Fetch RPC to VoiceSegmentation that returns the model weights themselves, or optionally, a url configured as a CLI flag (if the URL is unconfigured, return the weights directly). Add a basic integration test validating the weights are returned properly in tests/fetch/
 
