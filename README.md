@@ -5,6 +5,16 @@ Pyannote Segmentation 3.0 via ONNX and accretional/openvino-go as a remote grpc 
 
 1. Check out the transformers.js usage of onnx-community/pyannote-segmentation-3.0 in https://huggingface.co/onnx-community/pyannote-segmentation-3.0#transformersjs-v3-usage. Note the original model is in https://huggingface.co/pyannote/segmentation-3.0 and we may need to end up implementing pipelining (though the onnx example docs suggest >10s in their output so it may include that?). Create a setup.sh that will be used to host all setup scripts for those who clone this repo and try to build and run what we are about to build. Start with something that checks if docker is installed. Then create a Dockerfile that takes golang-1.26.1-alpine3.23, adds onnx weights from weights/ to the filesystem under /weights, builds a golang binary against a parameterized main.go, then strips eveverything from the built binary into a container  from SCRATCH. Make sure that all works and that any necessary setup outside of the dockerfile is in the setup script
 
+<details><summary>Implementation Notes</summary>
+
+- `setup.sh`: checks Docker installation + daemon, downloads `model.onnx` (fp32, 5.99MB) from HuggingFace to `weights/`
+- `Dockerfile`: multi-stage build from `golang:1.26.1-alpine3.23` → `scratch`. Uses `ARG MAIN_PKG=./cmd/vad` for parameterization. Builds with `CGO_ENABLED=0` and strips debug info with `-ldflags="-s -w"`. Final image contains only the binary, CA certs, and weights.
+- `cmd/vad/main.go`: minimal placeholder, verified working via `docker build -t vad . && docker run --rm vad`
+- Model info: input `[batch, 1, num_samples]` float32 (16kHz audio), output `[batch, num_frames, 7]` float32 logits
+- Added `weights/` and built binary to `.gitignore`, created `.dockerignore`
+
+</details>
+
 2. Get golang onnx inference working using the weights in https://huggingface.co/onnx-community/pyannote-segmentation-3.0/tree/main/onnx (use similar approach to https:// pkg/embedder/cpu/onnx_embedder.go in github.com/accretional/rpcembed/ and ask Rithesh why this isn't using openvino-go) via a Go pkg, write unit tests and a cmd/pkg-example/main.go to demo it on data/sorry-dave.mp3 Use go/embed to bundle the weights into the go binary.
 
 3. Define a vad.proto taking Audio inputs and Diarization outputs via a VoiceSegmentation grpc service using this and implement it using the package
