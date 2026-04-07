@@ -92,9 +92,56 @@ If something needs to be tested or built, it belongs in a script. If it's not in
 
 </details>
 
+6.5-BIG. **Anyserver: Generic gRPC+HTTP server framework with auto-doc, auto-linking, and service composition.**
+
+The goal is to build a reusable, modular server framework in https://github.com/accretional/anyserver that any Go gRPC project (including this one) can use to automatically get: a dual gRPC/HTTP server, auto-generated godocs embedded and served over HTTP, grpc-gateway REST proxying with Swagger UI, source code browsing, and a polished index page. The framework should also support composing multiple gRPC services (from this repo and external ones like https://github.com/accretional/ffmpeg-proto and https://github.com/accretional/audio-visualizer) into a single server during build.
+
+**User's vision:**
+- Use https://github.com/accretional/godoc-gen (may require changes to that repo too) to automatically generate docs for the package and embed them in the binary, served over HTTP.
+- Use https://github.com/accretional/audio-visualizer and/or https://github.com/accretional/ffmpeg-proto for better server-side audio processing and handling of more file formats.
+- Better docs and more client-side functionality for managing output audio.
+- This should be done in a modular, reusable way that can be used the same way in other repos: a way to partially or fully automate the integration of audio-visualizer and ffmpeg-proto gRPC services into the same gRPC server during build, and to generate the godocs of each, and their HTTP serving logic shim, and embed them all mostly automatically.
+- https://github.com/accretional/katarche does some of this (gen_go.sh auto-generates main.go from `*_grpc.pb.go`, `server.Run()` callback pattern, HTTP reflection UI, proto import tooling via go_pull.sh).
+- https://github.com/accretional/gluon handles Go→gRPC codegen (interface→proto, FullBootstrap, AST toolkit, proto compiler) but doesn't yet auto-integrate external gRPC services — it's close though.
+- Katarche's patterns can be borrowed, and gluon can be extended, to achieve this.
+- The vad repo stays the root for work until this project is done. Anyserver becomes the general server/doc/linker library.
+- This repo's Dockerfile should eventually clone anyserver and inject this repo's gRPC service/package into its build, validating the new pattern works.
+- Anyserver's default gRPC service should be called `Docs`, with RPCs: `GetSource(Path)` and `ListSource(Path)` (serving the repo's own `go:embed`-ed source code minus build artifacts but including .git), and `HTML(Path)` (serving auto-generated godoc HTML).
+- Use https://github.com/grpc-ecosystem/grpc-gateway and protoc-gen-openapiv2 for REST proxying and OpenAPI spec generation.
+- The index.html should serve Swagger UI, display the project README.md above it, use the repo name as the title/header, include basic metadata and links to code/docs, and use style.css for polish.
+
+**Execution plan:**
+
+Phase 1: Bootstrap anyserver (the generic framework)
+- 6.5a. Set up anyserver repo with Go module, proto tooling, and basic structure: `server/` (dual gRPC/HTTP logic, borrowing from katarche's `server.Run()` callback pattern), `cmd/anyserver/main.go` (stubbed), `services.go` (top-level service registry that main.go uses to determine which gRPC services to start).
+- 6.5b. Define `docs.proto` with service `Docs` containing `GetSource(SourceRequest) returns (SourceResponse)`, `ListSource(SourceRequest) returns (SourceListResponse)`, and `HTML(DocRequest) returns (DocResponse)`. Generate Go code.
+- 6.5c. Implement `Docs` service: `go:embed` the repo's own source (minus build artifacts, including .git), serve via GetSource/ListSource. HTML serves auto-generated godoc output (initially placeholder, later from godoc-gen).
+- 6.5d. Integrate grpc-gateway: add `google/api/annotations.proto` HTTP bindings to `docs.proto`, generate grpc-gateway reverse proxy and OpenAPI spec via protoc-gen-openapiv2. Wire the gateway mux into the HTTP server alongside static file serving.
+- 6.5e. Build the index.html: render README.md content (embedded), Swagger UI pointed at the generated OpenAPI spec, repo name as title, metadata links to GitHub repo and godocs. Add style.css.
+- 6.5f. Add a `tools/gen.sh` (inspired by katarche's `gen_go.sh`) that: runs protoc with go/grpc/gateway/openapi plugins, and optionally auto-generates the service registration in main.go by scanning `*_grpc.pb.go` files.
+
+Phase 2: Service composition / linking pattern
+- 6.5g. Design the "service injection" pattern: anyserver should accept external Go modules (like `github.com/accretional/vad`) that export a `Register(grpc.Server)` function or similar. The build process (via gen.sh or a go generate directive) clones/imports the external module, discovers its `*_grpc.pb.go` files, and auto-generates the registration calls in main.go.
+- 6.5h. Make vad export a clean registration entry point: a `Register(s *grpc.Server, opts ...Option)` in eg `pkg/server/register.go` that wires up VoiceSegmentation with its model and config.
+- 6.5i. Update vad's Dockerfile to clone anyserver, inject vad's service, and build — validating the composition pattern works end-to-end.
+
+Phase 3: Docs and enhanced tooling
+- 6.5j. Build or extend godoc-gen to produce static HTML from Go packages. Integrate its output into the Docs service's `HTML()` RPC. The build step runs godoc-gen on all packages and embeds the output.
+- 6.5k. Define a pattern for integrating ffmpeg-proto and audio-visualizer as additional composable services — same Register() pattern, their protos get gateway bindings, their godocs get generated and embedded.
+- 6.5l. Enhanced client-side audio management in basic-vad-web: download segmented audio, waveform visualization (via audio-visualizer if available, or a lightweight client-side fallback), better playback controls.
+
+Phase 4: Validation
+- 6.5m. Full test.sh validation: anyserver builds standalone, vad builds with anyserver composition, all existing vad tests still pass, Swagger UI and docs are accessible.
+
+<details><summary>Implementation Notes</summary>
+
+(To be filled in as work progresses)
+
+</details>
+
 7. Use https://github.com/accretional/cdp-agent with https://github.com/accretional/chromerpc to test that server in tests/basic-vad-web by uploading an actual file. The agent should simply set up the automation by doing it manually at first, then using the structure of the web app/lower level chromerpc capabilities to programmatically upload the audio file without requiring vision in some automation like https://github.com/accretional/chromerpc/blob/main/automations/screenshot_site.textproto (but it can use a bash script and more than one automation textproto if necessary).
 
-8. Implement a tests.sh that runs all the integration and unit tests. Make tests/basic-vad-web take screenshots 1s after the page loads and 1s after the final automation and have tests.sh save those to data/screenshots/YYY/MM/DD/basic-vad-web/start.png and data/screenshots/YYY/MM/DD/basic-vad-web/end.png
+8. Add screenshot automation to test.sh. Make tests/basic-vad-web take screenshots 1s after the page loads and 1s after the final automation and have test.sh save those to data/screenshots/YYY/MM/DD/basic-vad-web/start.png and data/screenshots/YYY/MM/DD/basic-vad-web/end.png
 
 9. Implement a bench.sh that runs the CLI 1000 times sequentially on data/sorry-dave.mp3, and separately, one that starts the server once and invokes it in 1000 batches of sequentially on data/sorry-dave.mp3 with n=1,5,10,100 parallel requests from the client (the client should create a single reusable datastructure to make sure that this doesn't get bottlenecked by client io). Save the results to data/benchmarks/YYYY/MM/DD/cli.csv and data/benchmarks/YYYY/MM/DD/rpc.csv
 
