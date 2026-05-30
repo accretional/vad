@@ -95,12 +95,17 @@
 
 <script>
 async function decide(verdict) {
-  const r = await fetch('/decision', {method: 'POST', headers: {'Content-Type': 'application/json'},
+  await fetch('/decision', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({verdict})});
-  const text = await r.text();
+  const accepted = verdict === 'accept';
   document.getElementById('content').innerHTML =
-    '<div class="done">' + (verdict === 'accept' ? '✅ Release accepted' : '❌ Release cancelled') +
-    '<br><small>You can close this tab.</small></div>';
+    '<div class="done">' +
+    (accepted ? '✅ Release accepted' : '❌ Release cancelled') +
+    (accepted
+      ? '<br><small>The release pipeline is finishing the zip + push now.<br>' +
+        'A new browser tab will open automatically with the download link when it\'s done (usually under a minute).</small>'
+      : '<br><small>You can close this tab.</small>') +
+    '</div>';
 }
 </script>
 </body>

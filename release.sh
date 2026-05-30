@@ -126,7 +126,21 @@ sha256_file() {
     if command -v sha256sum >/dev/null; then sha256sum "$1" | awk '{print $1}'
     else shasum -a 256 "$1" | awk '{print $1}'; fi
 }
-human_size() { du -h "$1" | awk '{print $1}'; }
+# Actual file size in human terms. Uses `wc -c` (portable; reports the byte
+# count, not the on-disk allocation that `du -h` reports — `du -h` gave us
+# inflated numbers like "97M" for an 83 MB file because of filesystem block
+# allocation rounding).
+human_size() {
+    local b
+    b=$(wc -c < "$1" | tr -d ' ')
+    awk -v b="$b" 'BEGIN {
+        split("B KB MB GB TB", units)
+        i = 1
+        while (b >= 1024 && i < 5) { b /= 1024; i++ }
+        if (i == 1) printf "%d %s", b, units[i]
+        else        printf "%.1f %s", b, units[i]
+    }'
+}
 
 art_row() {
     local name="$1" path="$2"
@@ -201,7 +215,9 @@ fi
 
 # ---- 10. zip ------------------------------------------------------------
 step "10 build release zip"
-ZIP_NAME="release_${TAG}_${GIT_SHA}.zip"
+# Project-name-prefixed so the downloaded file is recognisable in a
+# Downloads folder that holds bundles from many projects.
+ZIP_NAME="accretional-vad-release_${TAG}_${GIT_SHA}.zip"
 rm -f "$ZIP_NAME"
 zip -qr "$ZIP_NAME" "$LOG_DIR" bin/vad out/
 echo "  built: $ZIP_NAME ($(human_size "$ZIP_NAME"))"
@@ -215,7 +231,11 @@ step "12 post-release page — opens in browser (non-blocking)"
 POST_HTML="$LOG_DIR/post_release.html"
 ZIP_SHA=$(sha256_file "$ZIP_NAME")
 ACCEPTED_AT=$(awk '/^release ACCEPTED/{print $4, $5, $6}' "$LOG_DIR/release_decision.log" 2>/dev/null)
-REPO_URL=$(git config --get remote.origin.url 2>/dev/null | sed 's,\.git$,,;s,^git@github.com:,https://github.com/,')
+# Normalize remote URL: strip optional .git suffix, rewrite git@ syntax to
+# https, AND strip a trailing slash so concatenating /releases/... doesn't
+# produce a double-slash.
+REPO_URL=$(git config --get remote.origin.url 2>/dev/null \
+    | sed 's,\.git$,,; s,^git@github.com:,https://github.com/,; s,/*$,,')
 GH_RELEASE_URL="${REPO_URL}/releases/tag/${TAG}"
 ZIP_ABS="$(cd "$(dirname "$ZIP_NAME")" && pwd)/$(basename "$ZIP_NAME")"
 
@@ -254,7 +274,7 @@ a{color:#06c;text-decoration:none}a:hover{text-decoration:underline}
 .dl:hover{background:#1d8a1d;text-decoration:none}
 </style></head><body>
 <h1>✅ ${TAG} released</h1>
-<div class="subtitle">Pushed to ${REPO_URL}${REPO_URL:+ — }<a href="${GH_RELEASE_URL}">${GH_RELEASE_URL}</a></div>
+<div class="subtitle">Pushed to <a href="${REPO_URL}">${REPO_URL}</a>${REPO_URL:+ — }<a href="${GH_RELEASE_URL}">view on GitHub</a></div>
 
 <section>
   <h2>Download</h2>
