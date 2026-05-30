@@ -17,8 +17,17 @@ import (
 )
 
 const (
-	imageName  = "vad"
-	weightsURL = "https://huggingface.co/onnx-community/pyannote-segmentation-3.0/resolve/main/onnx/model.onnx"
+	imageName = "vad"
+
+	// hostedURL is what we pass via the -weights-url flag for the
+	// global-URL test. It only matters that it's a non-empty string the
+	// server can echo back — we don't actually fetch from it.
+	hostedURL = "https://huggingface.co/onnx-community/pyannote-segmentation-3.0/resolve/main/onnx/model.onnx"
+
+	// sidecarURL is the URL the embedded weights/pyannote/url.txt sidecar
+	// contains; the Fetch RPC prefers it over both raw bytes and the
+	// -weights-url flag (see internal/server/server.go fetchURL precedence).
+	sidecarURL = "https://raw.githubusercontent.com/accretional/vad/refs/heads/main/weights/pyannote/model.onnx"
 )
 
 func findRepoRoot() string {
@@ -91,47 +100,44 @@ func startContainer(t *testing.T, name, hostPort string, extraArgs ...string) pb
 	return nil
 }
 
-// TestFetchWeightsDirect tests that Fetch returns raw model weights
-// when no weights URL is configured.
-func TestFetchWeightsDirect(t *testing.T) {
-	client := startContainer(t, "vad-test-fetch-direct", "50052")
+// TestFetchWeightsSidecar — default container ships with embedded
+// weights/<backend>/url.txt sidecars. The Fetch RPC must prefer those over
+// streaming raw bytes.
+func TestFetchWeightsSidecar(t *testing.T) {
+	client := startContainer(t, "vad-test-fetch-sidecar", "50052")
 
 	resp, err := client.Fetch(context.Background(), &pb.FetchRequest{})
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-
-	weights := resp.GetWeights()
-	if weights == nil {
-		t.Fatal("expected weights bytes, got URL or nil")
+	url := resp.GetUrl()
+	if url == "" {
+		t.Fatalf("expected URL from url.txt sidecar, got weights bytes (%d) / nil",
+			len(resp.GetWeights()))
 	}
-
-	// model.onnx is ~5.99MB
-	if len(weights) < 5_000_000 || len(weights) > 10_000_000 {
-		t.Errorf("unexpected weights size: %d bytes", len(weights))
+	if url != sidecarURL {
+		t.Errorf("expected sidecar URL %q, got %q", sidecarURL, url)
 	}
-
-	t.Logf("Received %d bytes of model weights", len(weights))
+	t.Logf("Received sidecar URL: %s", url)
 }
 
-// TestFetchWeightsURL tests that Fetch returns a URL when the server
-// is configured with -weights-url.
-func TestFetchWeightsURL(t *testing.T) {
-	client := startContainer(t, "vad-test-fetch-url", "50053", "-weights-url", weightsURL)
+// TestFetchWeightsSidecarBeatsFlag — when both a -weights-url flag *and* a
+// per-model url.txt sidecar are present, the sidecar wins (per the
+// precedence comment in internal/server/server.go Fetch).
+func TestFetchWeightsSidecarBeatsFlag(t *testing.T) {
+	client := startContainer(t, "vad-test-fetch-flag", "50053", "-weights-url", hostedURL)
 
 	resp, err := client.Fetch(context.Background(), &pb.FetchRequest{})
 	if err != nil {
 		t.Fatalf("Fetch failed: %v", err)
 	}
-
 	url := resp.GetUrl()
 	if url == "" {
 		t.Fatal("expected URL, got weights bytes or nil")
 	}
-
-	if url != weightsURL {
-		t.Errorf("expected URL %q, got %q", weightsURL, url)
+	if url != sidecarURL {
+		t.Errorf("sidecar should win over -weights-url; expected %q, got %q",
+			sidecarURL, url)
 	}
-
-	t.Logf("Received URL: %s", url)
+	t.Logf("Received URL (sidecar precedence over flag): %s", url)
 }
