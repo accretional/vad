@@ -16,15 +16,15 @@ import (
 // Server implements the VoiceSegmentation gRPC service.
 type Server struct {
 	pb.UnimplementedVoiceSegmentationServer
-	model      *vad.Model
+	model      vad.Backend
 	weightsURL string
 	modelPath  string
 }
 
-// New creates a new Server with the given VAD model.
+// New creates a new Server with the given VAD backend.
 // weightsURL is optional — if set, Fetch returns it instead of the raw weights.
 // modelPath is needed to read weights from disk when weightsURL is empty.
-func New(model *vad.Model, modelPath string, weightsURL string) *Server {
+func New(model vad.Backend, modelPath string, weightsURL string) *Server {
 	return &Server{model: model, modelPath: modelPath, weightsURL: weightsURL}
 }
 
