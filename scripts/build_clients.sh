@@ -15,7 +15,10 @@
 # install hints if any are missing.
 #
 # Usage:
-#   bash scripts/gen-proto.sh
+#   bash scripts/build_clients.sh
+#
+# Future-extension hook: add Python / C++ / Java client generation here as
+# additional protoc plugins. For now Go is the only client we ship.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
