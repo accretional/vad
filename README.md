@@ -134,6 +134,16 @@ bash test.sh   # go vet, all unit tests, in-process integration tests, the pkg-e
 
 Layers that need Docker or ffmpeg skip gracefully if those tools aren't installed.
 
+### Cutting a release
+
+```bash
+bash release.sh                     # full pipeline, auto-tags vYYYY.MM.DD-<sha>
+bash release.sh --tag v0.2.0        # specific version tag
+RELEASE_DRY_RUN=1 bash release.sh   # full pipeline; push step logs only
+```
+
+The orchestrator runs **every** phase every time — no `--skip-*` flags. Tests, builds, per-artifact validation (5 distinct gRPC servers on distinct ports), HTML review gate (blocks on a browser ACCEPT/CANCEL click), zip, push, post-release page with download link + checksums. Each phase has its own script under [`scripts/`](scripts/) you can run standalone for iteration. Details: [`docs/release-pipeline.md`](docs/release-pipeline.md). Per-artifact shapes (fat vs slim binaries, slim container layout, when to use which): [`docs/artifacts.md`](docs/artifacts.md).
+
 ### Browser demo (`cmd/basic-vad-web`)
 
 Multi-backend comparison demo where all VAD inference runs **in the browser** via `onnxruntime-web`. The server side is just a metadata + weights proxy:
@@ -158,5 +168,9 @@ Three processes: `bin/vad` (gRPC, weights + DetectStream), [`speax/audio`](https
 - `cmd/pkg-example/` — minimal CLI that drives the `pkg/vad` interface over `data/*.mp3` (encode → detect → segment → re-encode).
 - `Dockerfile`, `build-native.sh`, `build.sh`, `setup.sh`, `test.sh`, `prep-embed.sh` — build / setup / test entry points (see header comments).
 - `tests/{e2e,fetch,stream,basic-vad-web}/` — integration tests; `tests/e2e` and `tests/fetch` are Docker-driven (e2e includes the per-backend matrix).
+- `tests/validate/` — standalone Go program the release pipeline runs against every built artifact (Detect + Fetch×5).
+- `cmd/release-review/` — tiny HTTP server that renders the release review page and blocks on operator ACCEPT/CANCEL.
+- `release.sh` + `scripts/` — release orchestrator and per-phase scripts (see [`docs/release-pipeline.md`](docs/release-pipeline.md)).
+- `docs/` — long-form references: release pipeline, artifact shapes, archived planning notes.
 - `docs/planning/original.md` — frozen snapshot of the original README development notes and plan.
 - [`TODO.md`](TODO.md) — outstanding work (streaming RPC improvements, backend abstraction, CI).
