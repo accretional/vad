@@ -136,6 +136,25 @@ else
     echo "  export ONNXRUNTIME_LIB=${ORT_LIB_DIR}/${ORT_LIB}"
 fi
 
+# Verify alternate-backend weights are present (they're bundled in git, not
+# downloaded; see .gitignore notes for rationale).
+echo ""
+for backend in fsmn-vad firered-vad; do
+    if [ -f "weights/${backend}/model.onnx" ]; then
+        echo "Backend ${backend} weights present: weights/${backend}/"
+    else
+        echo "WARNING: weights/${backend}/model.onnx missing. The -backend ${backend%-vad} flag won't work."
+        echo "  Either pull the latest commit (weights are bundled), or regenerate via:"
+        echo "    /Volumes/wd_office_1/repos/<bench_venv>/.venv/bin/python \\"
+        echo "      /Volumes/wd_office_1/repos/speax/benchmarks/vad/export_${backend//-/_}_to_onnx.py"
+    fi
+done
+
 echo ""
 echo "Setup complete. You can now build with:"
 echo "  ./build.sh"
+echo ""
+echo "Available VAD backends (selected at server startup):"
+echo "  ./bin/vad -backend pyannote               # default; full diarization + speaker IDs"
+echo "  ./bin/vad -backend fsmn                   # tiny FSMN-VAD (1.6 MB); fastest, VAD-only"
+echo "  ./bin/vad -backend firered                # FireRed DFSMN-VAD (2.3 MB); VAD-only"
