@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	modelPath := flag.String("model", "weights/model.onnx", "path to ONNX model")
+	modelPath := flag.String("model", "weights/pyannote/model.onnx", "path to ONNX model")
 	libPath := flag.String("lib", "", "path to ONNX Runtime shared library")
 	dataDir := flag.String("data", "data", "directory containing -16k.f32 audio files")
 	flag.Parse()
