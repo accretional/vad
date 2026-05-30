@@ -31,7 +31,7 @@
                 <div class="source-option">
                     <label for="audio-file" class="upload-label">
                         <span id="upload-text">Upload audio file</span>
-                        <input type="file" id="audio-file" accept="audio/*">
+                        <input type="file" id="audio-file" accept="audio/*,video/*,.mp4,.mov,.m4a,.webm,.flac,.mkv,.ogg,.opus,.aac">
                     </label>
                 </div>
                 <div class="source-option">
@@ -59,6 +59,11 @@
 
             <div id="results" class="results hidden">
                 <h3>Results</h3>
+                <!-- Waveform is rendered server-side by the audio gRPC backend
+                     (AudioToVectors + VectorsToSvg) and dropped in here as
+                     inline SVG. Falls back to the canvas header band if /svg
+                     is unavailable. -->
+                <div id="waveform-svg" class="waveform-svg"></div>
                 <canvas id="timeline-canvas" width="900" height="200"></canvas>
                 <div id="legend" class="legend"></div>
                 <div id="result-summary" class="summary-grid"></div>

@@ -51,6 +51,7 @@ const els = {
     canvas: $('timeline-canvas'),
     legend: $('legend'),
     summary: $('result-summary'),
+    waveformSvg: $('waveform-svg'),
 
     liveStart: $('live-start'),
     liveStop: $('live-stop'),
@@ -60,10 +61,17 @@ const els = {
 };
 
 let describeData = null;
-let currentAudio = null;       // { samples, source, label }
+let currentAudio = null;       // { samples, source, label, audioId? }
 let currentResults = null;
 let recordingState = null;
 let liveState = null;
+
+// Audio extensions we route through /upload (ffmpeg server-side decode).
+// Anything else we still try in-browser via Web Audio decodeAudioData, which
+// covers the .wav / .mp3 path the bundled samples use.
+const SERVER_DECODE_EXTS = new Set([
+    'mp4', 'mov', 'm4a', 'webm', 'flac', 'ogg', 'opus', 'mkv', 'aac', '3gp',
+]);
 
 (async function init() {
     populateSampleDropdown();
@@ -89,6 +97,9 @@ function populateSampleDropdown() {
         const opt = document.createElement('option');
         opt.value = `/static/samples/${s}`;
         opt.textContent = s;
+        // Keep the bare basename so loadFromUrl can build a stable id ("s-<name>")
+        // matching the one the server caches at startup.
+        opt.dataset.sampleName = s;
         els.sampleSelect.appendChild(opt);
     }
 }
@@ -156,15 +167,26 @@ function wireSourceHandlers() {
     els.sampleSelect.addEventListener('change', async (e) => {
         const url = e.target.value;
         if (!url) return;
-        await loadFromUrl(url, e.target.options[e.target.selectedIndex].text, 'sample');
+        const opt = e.target.options[e.target.selectedIndex];
+        const sampleName = opt.dataset.sampleName || '';
+        const audioId = sampleName ? ('s-' + sampleName) : null;
+        await loadFromUrl(url, opt.text, 'sample', { audioId });
     });
 
     els.fileInput.addEventListener('change', async (e) => {
         const f = e.target.files[0];
         if (!f) return;
         els.uploadText.textContent = f.name;
-        const buf = await f.arrayBuffer();
-        await loadFromBuffer(buf, f.name, 'upload');
+        const ext = (f.name.split('.').pop() || '').toLowerCase();
+        if (SERVER_DECODE_EXTS.has(ext)) {
+            // Send to the audio gRPC server (via /upload) for decode. This
+            // handles mp4/mov/webm/etc. that Web Audio can't reliably read
+            // across browsers.
+            await loadFromServerUpload(f);
+        } else {
+            const buf = await f.arrayBuffer();
+            await loadFromBuffer(buf, f.name, 'upload');
+        }
     });
 
     els.recordBtn.addEventListener('click', async () => {
@@ -193,12 +215,41 @@ function wireSourceHandlers() {
             els.recordBtn.classList.add('danger');
             els.recordState.textContent = 'recording...';
         } catch (err) {
-            els.recordState.textContent = 'mic error: ' + err.message;
+            els.recordState.textContent = await diagnoseMicError(err);
         }
     });
 }
 
-async function loadFromUrl(url, label, source) {
+// diagnoseMicError turns a getUserMedia DOMException into something the user
+// can act on. On macOS the most common case is the browser app itself missing
+// system-level mic permission, in which case the page-level prompt never even
+// fires — we detect that by calling enumerateDevices and checking whether any
+// audioinput entries are visible.
+async function diagnoseMicError(err) {
+    const name = err && err.name ? err.name : 'Error';
+    const msg = err && err.message ? err.message : String(err);
+    let hint = '';
+    try {
+        const devs = await navigator.mediaDevices.enumerateDevices();
+        const mics = devs.filter(d => d.kind === 'audioinput');
+        if (mics.length === 0) {
+            hint = ' — no microphones visible to the browser; check System Settings → Privacy & Security → Microphone and enable this browser';
+        } else if (name === 'NotAllowedError') {
+            hint = ' — permission denied for this page; click the lock/info icon next to the URL and re-allow microphone';
+        } else if (name === 'NotReadableError') {
+            hint = ' — the device is in use by another app';
+        } else if (name === 'OverconstrainedError') {
+            hint = ' — requested constraints cannot be met';
+        } else {
+            hint = ` — ${mics.length} mic(s) visible: ${mics.map(m => m.label || '(no label)').join(', ')}`;
+        }
+    } catch (e2) {
+        hint = ' — enumerateDevices also failed: ' + e2.message;
+    }
+    return `mic error (${name}): ${msg}${hint}`;
+}
+
+async function loadFromUrl(url, label, source, extra) {
     setBatchStatus('Loading ' + label + '...', '');
     const r = await fetch(url);
     if (!r.ok) {
@@ -206,14 +257,14 @@ async function loadFromUrl(url, label, source) {
         return;
     }
     const buf = await r.arrayBuffer();
-    await loadFromBuffer(buf, label, source);
+    await loadFromBuffer(buf, label, source, extra);
 }
 
-async function loadFromBuffer(arrayBuffer, label, source) {
+async function loadFromBuffer(arrayBuffer, label, source, extra) {
     setBatchStatus('Decoding ' + label + '...', '');
     try {
         const samples = await decodeToF32(arrayBuffer);
-        currentAudio = { samples, source, label };
+        currentAudio = { samples, source, label, ...(extra || {}) };
         showPreview(samples, label);
         setBatchStatus(`Ready: ${label} (${(samples.length / SAMPLE_RATE).toFixed(2)} s, ${samples.length.toLocaleString()} samples)`, 'success');
         els.detectBtn.disabled = false;
@@ -221,6 +272,32 @@ async function loadFromBuffer(arrayBuffer, label, source) {
         setBatchStatus('decode failed: ' + err.message, 'error');
         els.detectBtn.disabled = true;
     }
+}
+
+// loadFromServerUpload posts a media file to /upload, which calls into the
+// audio gRPC server's ConversionStream to decode to 16 kHz mono float32 WAV.
+// The response is a WAV the browser can run through decodeAudioData unchanged.
+// The server tags the response with X-Audio-Id so /svg can fetch a matching
+// waveform without re-uploading.
+async function loadFromServerUpload(file) {
+    setBatchStatus(`Uploading ${file.name} (server-side decode)...`, '');
+    const fd = new FormData();
+    fd.append('file', file);
+    let r;
+    try {
+        r = await fetch('/upload', { method: 'POST', body: fd });
+    } catch (err) {
+        setBatchStatus('upload failed: ' + err.message, 'error');
+        return;
+    }
+    if (!r.ok) {
+        const body = await r.text();
+        setBatchStatus(`upload ${r.status}: ${body || r.statusText}`, 'error');
+        return;
+    }
+    const audioId = r.headers.get('X-Audio-Id') || null;
+    const buf = await r.arrayBuffer();
+    await loadFromBuffer(buf, file.name, 'upload', { audioId });
 }
 
 async function decodeToF32(arrayBuffer) {
@@ -360,8 +437,11 @@ function renderResults(data) {
     const dpr = window.devicePixelRatio || 1;
     const cssWidth = canvas.clientWidth || 900;
     const rowHeight = 36;
-    const headerHeight = 60;
     const padding = 12;
+    // Header band stays at 0 height when the server-side SVG is in play —
+    // the SVG sits above the canvas instead of being painted into it.
+    const useServerSvg = !!(currentAudio && currentAudio.audioId);
+    const headerHeight = useServerSvg ? 24 : 60;
     const cssHeight = headerHeight + padding + (data.results.length * rowHeight) + padding;
     canvas.style.height = cssHeight + 'px';
     canvas.width = cssWidth * dpr;
@@ -373,7 +453,12 @@ function renderResults(data) {
     const duration = data.audio_duration_seconds;
     const xFor = (t) => (t / duration) * cssWidth;
 
-    drawWaveform(ctx, cssWidth, headerHeight, currentAudio ? currentAudio.samples : null);
+    if (useServerSvg) {
+        loadServerWaveformSvg(currentAudio.audioId, Math.round(cssWidth), 80);
+    } else {
+        if (els.waveformSvg) els.waveformSvg.innerHTML = '';
+        drawWaveform(ctx, cssWidth, headerHeight, currentAudio ? currentAudio.samples : null);
+    }
 
     ctx.fillStyle = '#888';
     ctx.font = '10px system-ui, sans-serif';
@@ -495,6 +580,27 @@ function drawWaveform(ctx, w, h, samples) {
     ctx.stroke();
 }
 
+// loadServerWaveformSvg asks the demo HTTP server for a waveform SVG for the
+// given clip id, then drops it directly into #waveform-svg. The server proxies
+// to the audio gRPC backend (AudioToVectors + VectorsToSvg). On error or when
+// the audio backend is disabled (503) we silently fall back to the canvas
+// waveform that runs next in renderResults().
+async function loadServerWaveformSvg(audioId, width, height) {
+    if (!els.waveformSvg) return;
+    els.waveformSvg.innerHTML = '<div class="waveform-loading">waveform...</div>';
+    try {
+        const r = await fetch(`/svg?id=${encodeURIComponent(audioId)}&w=${width}&h=${height}`);
+        if (!r.ok) {
+            els.waveformSvg.innerHTML = '';
+            return;
+        }
+        const svg = await r.text();
+        els.waveformSvg.innerHTML = svg;
+    } catch (_) {
+        els.waveformSvg.innerHTML = '';
+    }
+}
+
 function hexToRgba(hex, a) {
     const h = hex.replace('#', '');
     const r = parseInt(h.substring(0, 2), 16);
@@ -536,7 +642,7 @@ async function startLive() {
     try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-        appendLive('mic error: ' + err.message, 'error');
+        appendLive(await diagnoseMicError(err), 'error');
         return;
     }
     const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

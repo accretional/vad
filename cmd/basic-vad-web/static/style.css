@@ -154,6 +154,21 @@ button.danger:hover:not(:disabled) { background: #8e1f1f; }
 .hidden { display: none !important; }
 
 .results { margin-top: 1rem; }
+.waveform-svg {
+    width: 100%;
+    margin-bottom: 0.5rem;
+    background: #1a1f2b;
+    border-radius: 4px;
+    overflow: hidden;
+    min-height: 0;
+}
+.waveform-svg:empty { display: none; }
+.waveform-svg svg { display: block; width: 100%; height: auto; }
+.waveform-svg .waveform-loading {
+    color: #888;
+    font-size: 0.8rem;
+    padding: 0.5rem 0.75rem;
+}
 #timeline-canvas {
     width: 100%;
     height: auto;

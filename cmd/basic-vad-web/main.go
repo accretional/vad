@@ -110,11 +110,22 @@ type app struct {
 	vadConn      *grpc.ClientConn
 	defaultModel pb.VADModel
 	weightsRoot  string // on-disk weights dir for fallback (usually "weights")
+
+	// audio talks to the speax/audio MediaConverter gRPC service. Used by
+	// /upload (decode arbitrary media → 16 kHz mono WAV) and /svg (waveform
+	// SVG via AudioToVectors + VectorsToSvg). nil when -audio-addr was unset
+	// — the corresponding endpoints then return 503.
+	audio *audioApp
 }
 
 func main() {
 	httpPort := flag.Int("port", 8080, "HTTP port for the web UI")
 	vadAddr := flag.String("vad-addr", "localhost:50051", "host:port of the single vad gRPC backend")
+	audioAddr := flag.String("audio-addr", "localhost:50052",
+		"host:port of the speax/audio MediaConverter gRPC service. "+
+			"Used for /upload (decode arbitrary media → 16 kHz mono WAV) and /svg "+
+			"(waveform SVG via AudioToVectors + VectorsToSvg). "+
+			"Set to empty to disable both endpoints.")
 	weightsRoot := flag.String("weights-root", "weights",
 		"on-disk weights/ directory used as fallback when /aux files aren't embedded")
 	flag.Parse()
@@ -136,6 +147,23 @@ func main() {
 		vadClient:   pb.NewVoiceSegmentationClient(conn),
 		vadConn:     conn,
 		weightsRoot: *weightsRoot,
+	}
+
+	// Audio backend is optional — without it /upload and /svg return 503,
+	// but the rest of the demo (samples, in-browser inference, live mic)
+	// keeps working.
+	if *audioAddr != "" {
+		au, err := newAudioApp(*audioAddr)
+		if err != nil {
+			log.Printf("audio backend at %s unavailable: %v (continuing without /upload + /svg)", *audioAddr, err)
+		} else {
+			a.audio = au
+			if err := extractBundledSamples(); err != nil {
+				log.Printf("extract bundled samples: %v", err)
+			} else {
+				go a.warmSampleSvgs()
+			}
+		}
 	}
 	// Try to learn the server's loaded model via reflection-free probe: call
 	// Fetch with UNSPECIFIED, which makes the server use its defaultModel —
@@ -161,6 +189,8 @@ func main() {
 	mux.HandleFunc("/fetch", a.handleFetch)
 	mux.HandleFunc("/aux/", a.handleAux)
 	mux.HandleFunc("/socket", a.handleSocket)
+	mux.HandleFunc("/upload", a.handleUploadOr503)
+	mux.HandleFunc("/svg", a.handleSvgOr503)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", *httpPort),

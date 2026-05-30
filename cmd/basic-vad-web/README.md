@@ -9,24 +9,25 @@ backing gRPC server.
 ## Architecture
 
 ```
-                           +-----------------------+
-                           |  basic-vad-web (Go)   |
-                           |  HTTP :8080           |
-                           |                       |
-   Browser  <--/describe-- |  /describe  /fetch    |
-                           |  /aux/...   /socket   |
-            <--/aux/...--- |  /static/...          |
-            <--/fetch----- +-----------+-----------+
-            (returns                   |
-             {url}                     | gRPC :50051
-             OR bytes)                 v
-                              +------------------+
-                              |  ./bin/vad       |
-                              |  (one backend    |
-                              |  loaded; weights |
-                              |  + url.txt       |
-                              |  embedded)       |
-                              +------------------+
+                           +--------------------------------+
+                           |  basic-vad-web (Go)            |
+                           |  HTTP :8080                    |
+                           |                                |
+   Browser  <--/describe-- |  /describe  /fetch  /aux/...   |
+                           |  /socket    /upload  /svg      |
+            <--/static/--- |  /static/...                   |
+                           +-+----------------+-------------+
+                             |                |
+                  gRPC :50051|                |gRPC :50052
+                             v                v
+                  +------------------+   +----------------------+
+                  |  ./bin/vad       |   |  speax/audio server  |
+                  |  (one VAD        |   |  (MediaConverter:    |
+                  |  backend loaded; |   |   ConversionStream,  |
+                  |  weights +       |   |   AudioToVectors,    |
+                  |  url.txt         |   |   svg, ...)          |
+                  |  embedded)       |   +----------------------+
+                  +------------------+
 
                               In the browser (per backend, per Web Worker):
 
@@ -40,24 +41,41 @@ backing gRPC server.
                        └── IndexedDB cache for model.onnx + aux sidecars
 ```
 
-**One Go process for the vad server**, **one Go process for the demo HTTP
-server**. The browser does all inference for the side-by-side comparison;
-the gRPC server is only consulted for: serving model weights (via the
-`Fetch` RPC, proxied through `/fetch`), serving aux sidecars (via `/aux`,
-read straight from the embedded weights tree), and bridging the live-mic
-WebSocket to `DetectStream`.
+**THREE Go processes**:
+
+1. `./bin/vad` (gRPC :50051) — one VAD backend loaded. Serves model weights
+   (`Fetch`) and bridges the live mic (`DetectStream`).
+2. `audio-server` (gRPC :50052) — the speax/audio `MediaConverter` service
+   built from a sibling `../speax/audio` checkout. Used for decoding
+   arbitrary container formats (mp4, mov, webm, m4a, flac, ...) to the
+   16 kHz mono float32 WAV that the VAD pipeline expects, and for rendering
+   waveform SVGs (`AudioToVectors` + `Svg`).
+3. The demo HTTP server in front of both. The browser does all VAD inference
+   for the side-by-side comparison; the gRPC servers are only consulted for
+   weights, live mic, media decode, and waveform rendering.
 
 ## Running it
+
+`run.sh` spawns three processes: vad (:50051), audio server (:50052), and the
+demo HTTP server (:8080). It expects a sibling `../speax/audio` checkout (the
+audio server is `go build`'d from there); override with `AUDIO_REPO=`. All
+three processes are torn down on Ctrl-C.
 
 ```bash
 # Build the vad gRPC server (one-time; ships every backend embedded).
 ./build-native.sh                # → ./bin/vad
 
-# From the repo root, spawn ONE vad backend + the demo HTTP server + open browser.
+# From the repo root, spawn vad + audio + demo HTTP server + open browser.
 ./cmd/basic-vad-web/run.sh                       # pyannote on :50051 (default)
-./cmd/basic-vad-web/run.sh --backend silero      # any single backend
+./cmd/basic-vad-web/run.sh --backend silero      # any single vad backend
 PORT=9090 ./cmd/basic-vad-web/run.sh --backend marblenet
+AUDIO_PORT=50066 ./cmd/basic-vad-web/run.sh      # change audio gRPC port
+AUDIO_REPO=/path/to/speax/audio ./cmd/basic-vad-web/run.sh
 ```
+
+If the audio server isn't reachable the demo still boots — only `/upload` and
+`/svg` return 503; bundled samples + in-browser inference + live mic keep
+working.
 
 The choice of vad backend only affects the live-streaming panel
 (`/socket → DetectStream` runs against whatever backend the server loaded).
@@ -117,6 +135,8 @@ swap the `ORT_URL` constant in `static/js/worker.js` for a path under
 | `GET /fetch?model=NAME` | Proxies the gRPC `Fetch` RPC. Returns `{"url": "..."}` (application/json) when the server has a CDN URL for the backend (via `url.txt` sidecar), otherwise the raw .onnx bytes (application/octet-stream) |
 | `GET /aux/<dir>/<file>` | Serves auxiliary files (`am.mvn`, `cmvn_*.f32`, ...) from the same embedded weights tree the gRPC server uses. Allowlisted; no path traversal. |
 | `WS /socket` | Bridges browser WebSocket ↔ `DetectStream` against the single backing gRPC backend. Binary frames = raw float32-LE PCM @ 16 kHz mono. Server sends JSON text events: `{type: "activity", speech_active, timestamp}` or `{type: "segment", start, end, speaker_id, confidence, timestamp}` |
+| `POST /upload` | Multipart media file (`file` field) → 16 kHz mono float32 WAV. Proxies to the speax/audio server's `ConversionStream` (decode via `Transform.audio_raw` → ffmpeg `-ar 16000 -ac 1 -f f32le`) and re-wraps the raw PCM in a WAV header so the browser's existing `decodeAudioData` path can handle it unchanged. Response header `X-Audio-Id` returns a stable id usable with `/svg`. Accepts mp4, mov, m4a, webm, flac, mkv, ogg, opus, aac, plus the wav/mp3 already handled in-browser. Returns 503 when the audio backend is disabled. |
+| `GET /svg?id=<id>&w=<W>&h=<H>` | Waveform SVG for a known clip (`u-…` upload returned from `/upload`, or `s-<basename>` for a bundled sample). Proxies to the audio server's `AudioToVectors` + `Svg` RPCs. Cached per `(id, w, h)` in-process; bundled samples are warmed at startup. Defaults: 900×80. Returns 503 when the audio backend is disabled. |
 
 There's no `/detect` HTTP endpoint anymore — the browser does that work
 locally via the Worker engine. If you want server-side inference for a
@@ -141,8 +161,9 @@ embedded `url.txt` wins, then on-disk, then fall back to raw bytes.
 ```
 cmd/basic-vad-web/
   main.go              HTTP server: /describe, /fetch, /aux, /socket
+  audio.go             /upload, /svg + audio-gRPC client wiring + sample warmup
   main_test.go         /describe shape, /aux allowlist, static FS contents
-  run.sh               Spawns ONE vad backend + demo + opens browser
+  run.sh               Spawns vad + audio-server + demo HTTP, opens browser
   static/
     index.html         Two-section page: batch compare + live mic
     app.js             ES module: source picker, fanout to engine, canvas render

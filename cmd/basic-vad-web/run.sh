@@ -1,23 +1,27 @@
 #!/bin/bash
 # basic-vad-web/run.sh
 #
-# Spin up ONE vad gRPC backend + the HTTP demo server in front. Batch
-# inference now runs in the browser (onnxruntime-web), so the server-side
-# backend is only used by:
-#   - /fetch (proxies the Fetch RPC so the browser can download models /
-#     get a url.txt redirect)
-#   - /aux/<dir>/<file> (sidecars served straight from the embedded weights
-#     tree — no RPC needed)
-#   - /socket (live-streaming panel: bridges the mic to DetectStream
-#     against the loaded server-side backend)
+# Spin up THREE processes: one vad gRPC backend, one speax/audio gRPC
+# backend, and the HTTP demo server in front. Batch inference now runs in
+# the browser (onnxruntime-web), so the server-side processes only handle:
+#
+#   vad (:50051)   — /fetch (model weights), /socket (DetectStream)
+#   audio (:50052) — /upload (decode arbitrary container → 16 kHz mono WAV
+#                    via speax/audio's MediaConverter), /svg (waveform SVG
+#                    via AudioToVectors + VectorsToSvg)
+#   demo (:8080)   — HTTP front, serves embedded UI + proxies both backends
 #
 # Usage:
-#   ./run.sh                              # pyannote on :50051, demo on :8080
-#   ./run.sh --backend silero             # any single backend
+#   ./run.sh                              # pyannote on :50051, audio on :50052, demo on :8080
+#   ./run.sh --backend silero             # any single vad backend
 #   PORT=9000 ./run.sh                    # change demo HTTP port
 #   VAD_PORT=50055 ./run.sh               # change vad gRPC port
+#   AUDIO_PORT=50066 ./run.sh             # change audio gRPC port
+#   AUDIO_REPO=/path/to/speax/audio       # override sibling-checkout path
 #
 # Requires ./bin/vad to already exist. Run ./build-native.sh first if not.
+# Also requires a sibling checkout of speax/audio (default: ../speax/audio
+# from this repo's root) — the audio server binary is built from there.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,7 +30,9 @@ cd "$REPO_ROOT"
 
 HTTP_PORT="${PORT:-8080}"
 VAD_PORT="${VAD_PORT:-50051}"
+AUDIO_PORT="${AUDIO_PORT:-50052}"
 VAD_BIN="$REPO_ROOT/bin/vad"
+AUDIO_REPO="${AUDIO_REPO:-$REPO_ROOT/../speax/audio}"
 
 BACKEND="pyannote"
 while [ $# -gt 0 ]; do
@@ -41,40 +47,59 @@ if [ ! -x "$VAD_BIN" ]; then
     exit 1
 fi
 
+if [ ! -d "$AUDIO_REPO" ]; then
+    echo "ERROR: speax/audio checkout not found at $AUDIO_REPO." >&2
+    echo "       Set AUDIO_REPO=/path/to/speax/audio or clone it as a sibling of this repo." >&2
+    exit 1
+fi
+
 echo "=== Building basic-vad-web ==="
 DEMO_BIN="$SCRIPT_DIR/basic-vad-web"
 go build -o "$DEMO_BIN" ./cmd/basic-vad-web/
+
+echo "=== Building audio server (from $AUDIO_REPO) ==="
+AUDIO_BIN="$SCRIPT_DIR/audio-server"
+( cd "$AUDIO_REPO" && go build -o "$AUDIO_BIN" ./cmd/server )
 
 echo "=== Starting vad backend $BACKEND on :$VAD_PORT ==="
 "$VAD_BIN" -backend "$BACKEND" -port "$VAD_PORT" &
 VAD_PID=$!
 
+echo "=== Starting audio server on :$AUDIO_PORT ==="
+"$AUDIO_BIN" -port "$AUDIO_PORT" &
+AUDIO_PID=$!
+
 cleanup() {
     echo ""
-    echo "Stopping demo + vad..."
+    echo "Stopping demo + vad + audio..."
     [ -n "${DEMO_PID:-}" ] && kill "$DEMO_PID" 2>/dev/null || true
     kill "$VAD_PID" 2>/dev/null || true
+    kill "$AUDIO_PID" 2>/dev/null || true
     wait 2>/dev/null || true
-    rm -f "$DEMO_BIN"
+    rm -f "$DEMO_BIN" "$AUDIO_BIN"
 }
 trap cleanup EXIT
 
-echo "Waiting for vad to come up..."
+echo "Waiting for vad + audio to come up..."
 for attempt in $(seq 1 40); do
-    if nc -z localhost "$VAD_PORT" 2>/dev/null; then
-        echo "  vad backend ready on localhost:$VAD_PORT"
+    if nc -z localhost "$VAD_PORT" 2>/dev/null && nc -z localhost "$AUDIO_PORT" 2>/dev/null; then
+        echo "  vad ready on localhost:$VAD_PORT"
+        echo "  audio ready on localhost:$AUDIO_PORT"
         break
     fi
     sleep 0.25
     if [ "$attempt" = "40" ]; then
-        echo "  vad NEVER CAME UP — check logs above" >&2
+        echo "  one of vad/audio NEVER CAME UP — check logs above" >&2
     fi
 done
 
 echo ""
 echo "=== Starting demo HTTP server on :$HTTP_PORT ==="
 echo "    -vad-addr localhost:$VAD_PORT"
-"$DEMO_BIN" -port "$HTTP_PORT" -vad-addr "localhost:$VAD_PORT" &
+echo "    -audio-addr localhost:$AUDIO_PORT"
+"$DEMO_BIN" -port "$HTTP_PORT" \
+    -vad-addr "localhost:$VAD_PORT" \
+    -audio-addr "localhost:$AUDIO_PORT" &
 DEMO_PID=$!
 
 URL="http://localhost:${HTTP_PORT}"
