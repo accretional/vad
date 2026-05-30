@@ -65,12 +65,10 @@ func legacyBackendName(s string) pb.VADModel {
 }
 
 // discoverOnnxRuntime looks for libonnxruntime.{dylib,so} in conventional
-// locations and returns the first match, or "" if none found.
-//
-// **Diagnostic only.** The server always loads the embedded dylib (see
-// internal/embedded.MaterializeDylib); this function is used at startup to
-// log whether a system install also exists, and to warn if the local copy
-// looks like it could conflict (different size suggests different version).
+// locations and returns the first match, or "" if none found. Used as the
+// primary ORT-resolution path — the slim container's /onnx/ort/ COPY is
+// picked up via the first candidate; dev boxes get third_party/ next;
+// system installs (homebrew etc.) are the deep fallback.
 func discoverOnnxRuntime() string {
 	var libName string
 	switch runtime.GOOS {
@@ -81,7 +79,10 @@ func discoverOnnxRuntime() string {
 	default:
 		return ""
 	}
-	candidates := []string{}
+	candidates := []string{
+		// Slim container convention — Dockerfile COPYs the dylib here.
+		"/onnx/ort/" + libName,
+	}
 	if exe, err := os.Executable(); err == nil {
 		for _, base := range []string{filepath.Dir(exe), filepath.Dir(filepath.Dir(exe))} {
 			matches, _ := filepath.Glob(filepath.Join(base, "third_party", "onnxruntime-*", "lib", libName))
@@ -154,11 +155,14 @@ func main() {
 		cfg.Port = 50051
 	}
 
-	// Resolve the ONNX Runtime dylib path. Priority:
+	// Resolve the ONNX Runtime dylib path. Priority (DISK-FIRST):
 	//   1. explicit override (CLI -lib, config field, or env) — for advanced
 	//      users pinning a specific version
-	//   2. embedded dylib materialized to a temp file (default for prod)
-	//   3. discovered system install (back-compat only, deprecated)
+	//   2. discovered on-disk install (/onnx/ort/<lib>, third_party/, system
+	//      paths) — preferred so the slim container doesn't materialize when
+	//      the dylib already sits at /onnx/ort/ from the Dockerfile COPY
+	//   3. embedded dylib materialized to a temp file — fallback for
+	//      standalone binaries with no ORT installed anywhere
 	var ortPath, ortTempPath string
 	ortExplicit := cfg.OnnxruntimeLib
 	if ortExplicit == "" {
@@ -168,9 +172,12 @@ func main() {
 	case ortExplicit != "":
 		ortPath = ortExplicit
 		log.Printf("ORT: using explicit override %s", ortPath)
+	case discoverOnnxRuntime() != "":
+		ortPath = discoverOnnxRuntime()
+		log.Printf("ORT: using on-disk install %s", ortPath)
 	case embedded.HasEmbeddedDylib():
 		var err error
-		ortTempPath, err = embedded.MaterializeDylib(embedMaterializeRoot)
+		ortTempPath, err = embedded.MaterializeDylib()
 		if err != nil {
 			log.Fatalf("ORT: failed to materialize embedded dylib: %v", err)
 		}
@@ -178,14 +185,8 @@ func main() {
 		log.Printf("ORT: using embedded dylib for %s (%d bytes) → %s",
 			embedded.PlatformLabel(), embedded.OrtBytes(), ortPath)
 	default:
-		discovered := discoverOnnxRuntime()
-		if discovered == "" {
-			log.Fatal("Could not find libonnxruntime.{dylib,so}: no embedded dylib for this " +
-				"build target (build with the right GOOS/GOARCH or supply -lib).")
-		}
-		ortPath = discovered
-		log.Printf("ORT: no embedded dylib for %s/%s; using discovered system install %s",
-			runtime.GOOS, runtime.GOARCH, discovered)
+		log.Fatal("Could not find libonnxruntime.{dylib,so}: not on disk, not embedded. " +
+			"Supply -lib, set ONNXRUNTIME_LIB, or build with the right GOOS/GOARCH.")
 	}
 	// Diagnostic: if both embedded AND a system install exist, warn on size
 	// mismatch (likely different ORT versions, which can produce subtle bugs).
@@ -207,8 +208,9 @@ func main() {
 	}
 	defer vad.DestroyONNXRuntime()
 
-	// Resolve the backend's weights. Embedded-first; on-disk weights/<backend>
-	// is the override path for backends added after the binary was built.
+	// Resolve the backend's weights. Disk-first (so the slim container uses
+	// /onnx/weights/<backend>/ directly without extracting embedded copies);
+	// embed fallback for standalone binaries.
 	backendName, ok := backendDirName(cfg.Model)
 	if !ok {
 		log.Fatalf("unknown VADModel %v", cfg.Model)
@@ -217,7 +219,7 @@ func main() {
 	var weightsTempDir string
 	if weightsDir == "" {
 		var err error
-		weightsDir, weightsTempDir, err = embedded.ResolveWeights(onDiskWeightsRoot, backendName, embedMaterializeRoot)
+		weightsDir, weightsTempDir, err = embedded.ResolveWeights(onDiskWeightsRoot, backendName)
 		if err != nil {
 			log.Fatalf("resolve weights for %s: %v", backendName, err)
 		}

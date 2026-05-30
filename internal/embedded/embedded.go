@@ -1,15 +1,20 @@
 // Package embedded ships the ONNX Runtime shared library and the per-backend
 // model weights bundled into the vad binary at compile time. Build steps in
-// build.sh materialize third_party/ and weights/ into ort/ and weights/
+// prep-embed.sh materialize third_party/ and weights/ into ort/ and weights/
 // subdirs here right before `go build`, so the binary is self-contained.
 //
 // Two surfaces:
 //   - OrtLib: bytes of libonnxruntime.{dylib,so} for the build target's
 //     platform. Empty []byte if not embedded for this platform.
 //   - Weights: an embed.FS rooted at weights/, mirroring the on-disk layout
-//     (weights/<backend>/<file>). Helper functions resolve a path against
-//     this FS or fall back to the on-disk weights/ directory if the file is
-//     present there (so users can drop in updated weights without rebuilding).
+//     (weights/<backend>/<file>). What's actually embedded depends on the
+//     build tag (see weights_fat.go vs weights_slim.go).
+//
+// Resolution is DISK-FIRST throughout. Reasoning: in the slim-container
+// deployment, /onnx/weights/<backend>/ is the canonical location populated
+// by the Dockerfile, and we don't want to materialize embedded copies
+// alongside it. In the dev / standalone-binary case, the embed kicks in
+// only when nothing is on disk — which is exactly when it's needed.
 package embedded
 
 import (
@@ -35,24 +40,18 @@ var _ = embed.FS{}
 func HasEmbeddedDylib() bool { return len(OrtLib) > 0 }
 
 // MaterializeDylib writes the embedded ORT shared library bytes to a unique
-// file and returns the path, suitable for InitONNXRuntime. Caller is
+// temp file and returns the path, suitable for InitONNXRuntime. Caller is
 // responsible for removing the file when done (typically at process exit).
 //
-// `rootDir` is the parent directory for the materialized file ("" means
-// os.CreateTemp's default — /tmp on Unix). Slim container builds pass
-// "/onnx" so the dylib lands at a stable, mountable location.
+// Used only as a fallback when no ORT dylib is found on disk; the normal
+// container path picks /onnx/ort/<libname> via discoverOnnxRuntime.
 //
 // Returns an error if the build target has no embedded dylib.
-func MaterializeDylib(rootDir string) (string, error) {
+func MaterializeDylib() (string, error) {
 	if !HasEmbeddedDylib() {
 		return "", fmt.Errorf("no embedded ORT dylib for this build target")
 	}
-	if rootDir != "" {
-		if err := os.MkdirAll(rootDir, 0o755); err != nil {
-			return "", fmt.Errorf("ensure dylib root %q: %w", rootDir, err)
-		}
-	}
-	tmp, err := os.CreateTemp(rootDir, "libonnxruntime-*"+ortLibExt())
+	tmp, err := os.CreateTemp("", "libonnxruntime-*"+ortLibExt())
 	if err != nil {
 		return "", fmt.Errorf("create temp dylib: %w", err)
 	}
@@ -70,47 +69,23 @@ func MaterializeDylib(rootDir string) (string, error) {
 // ResolveWeights returns a directory containing the requested backend's
 // weights, ready to pass to a backend constructor.
 //
-// Resolution order (embedded-first):
-//  1. If the embedded `weights/<backend>/model.onnx` exists, materialize the
-//     embedded tree to a temp dir and return that. This is the canonical path
-//     since the binary ships with weights at build time.
-//  2. Otherwise, if `<onDiskRoot>/<backend>/model.onnx` exists on disk, return
-//     that directory. This is the escape hatch for backends added after the
-//     binary was built (drop new weights under weights/ to extend without
-//     recompiling — useful when the VADModel enum has been extended but the
-//     binary release lags).
+// Resolution order (DISK-FIRST):
+//  1. If `<onDiskRoot>/<backend>/model.onnx` exists, return that directory
+//     as-is. This is the normal path in the slim container — the Dockerfile
+//     COPYs the full weights tree to /onnx/weights/.
+//  2. Otherwise, if the embedded `weights/<backend>/model.onnx` exists,
+//     materialize the embedded tree to a temp dir and return that. This is
+//     the fallback for standalone binaries that have no weights tree on disk.
 //
 // `onDiskRoot` is the conventional weights/ directory (e.g. "weights" when
 // running from the repo root, or "/onnx/weights" in slim container builds).
-// Pass "" to skip the disk fallback entirely.
-//
-// `materializeRoot` is the parent directory for the temp dir holding the
-// extracted embedded files ("" means os.MkdirTemp's default — /tmp on Unix).
-// Slim container builds pass "/onnx" so materialized files land at a stable,
-// mountable location alongside the on-disk weights tree.
+// Pass "" to skip the disk check entirely.
 //
 // `tempDir` is non-empty only when materialization happened; caller should
 // `os.RemoveAll(tempDir)` at shutdown.
-func ResolveWeights(onDiskRoot, backend, materializeRoot string) (dir, tempDir string, err error) {
+func ResolveWeights(onDiskRoot, backend string) (dir, tempDir string, err error) {
 	if backend == "" {
 		return "", "", errors.New("backend cannot be empty")
-	}
-	embedRoot := "weights/" + backend
-	if _, statErr := fs.Stat(Weights, embedRoot+"/model.onnx"); statErr == nil {
-		if materializeRoot != "" {
-			if err := os.MkdirAll(materializeRoot, 0o755); err != nil {
-				return "", "", fmt.Errorf("ensure materialize root %q: %w", materializeRoot, err)
-			}
-		}
-		tmpDir, mkErr := os.MkdirTemp(materializeRoot, "vad-weights-"+backend+"-*")
-		if mkErr != nil {
-			return "", "", fmt.Errorf("mkdir temp: %w", mkErr)
-		}
-		if matErr := materializeDir(Weights, embedRoot, tmpDir); matErr != nil {
-			os.RemoveAll(tmpDir)
-			return "", "", matErr
-		}
-		return tmpDir, tmpDir, nil
 	}
 	if onDiskRoot != "" {
 		candidate := filepath.Join(onDiskRoot, backend)
@@ -120,34 +95,45 @@ func ResolveWeights(onDiskRoot, backend, materializeRoot string) (dir, tempDir s
 			}
 		}
 	}
-	return "", "", fmt.Errorf("no weights for backend %q (not embedded, not on disk at %q)", backend, onDiskRoot)
+	embedRoot := "weights/" + backend
+	if _, statErr := fs.Stat(Weights, embedRoot+"/model.onnx"); statErr == nil {
+		tmpDir, mkErr := os.MkdirTemp("", "vad-weights-"+backend+"-*")
+		if mkErr != nil {
+			return "", "", fmt.Errorf("mkdir temp: %w", mkErr)
+		}
+		if matErr := materializeDir(Weights, embedRoot, tmpDir); matErr != nil {
+			os.RemoveAll(tmpDir)
+			return "", "", matErr
+		}
+		return tmpDir, tmpDir, nil
+	}
+	return "", "", fmt.Errorf("no weights for backend %q (not on disk at %q, not embedded)", backend, onDiskRoot)
 }
 
 // WeightsURL returns the CDN URL stored in the backend's url.txt sidecar, if
-// any. Resolution mirrors WeightsBytes (embedded-first, disk fallback):
+// any. Resolution mirrors WeightsBytes (disk-first):
 //
-//  1. If the embedded `weights/<backend>/url.txt` exists, return its trimmed
-//     contents.
-//  2. Otherwise, if `<onDiskRoot>/<backend>/url.txt` exists, return its trimmed
-//     contents.
+//  1. If `<onDiskRoot>/<backend>/url.txt` exists, return its trimmed contents.
+//  2. Otherwise, if the embedded `weights/<backend>/url.txt` exists, return
+//     its trimmed contents.
 //  3. Otherwise return ("", false).
 //
 // Used by the Fetch RPC to redirect clients to a CDN download (much smaller
 // payload through the gRPC pipe — clients fetch the .onnx directly from the
 // returned HTTPS URL). The convention is one line per file: a single URL.
 func WeightsURL(onDiskRoot, backend string) (string, bool) {
-	embedPath := "weights/" + backend + "/url.txt"
-	if data, err := fs.ReadFile(Weights, embedPath); err == nil {
-		if s := firstNonEmptyLine(string(data)); s != "" {
-			return s, true
-		}
-	}
 	if onDiskRoot != "" {
 		path := filepath.Join(onDiskRoot, backend, "url.txt")
 		if data, err := os.ReadFile(path); err == nil {
 			if s := firstNonEmptyLine(string(data)); s != "" {
 				return s, true
 			}
+		}
+	}
+	embedPath := "weights/" + backend + "/url.txt"
+	if data, err := fs.ReadFile(Weights, embedPath); err == nil {
+		if s := firstNonEmptyLine(string(data)); s != "" {
+			return s, true
 		}
 	}
 	return "", false
@@ -166,36 +152,36 @@ func firstNonEmptyLine(s string) string {
 }
 
 // WeightsBytes returns the raw ONNX bytes for the requested backend's primary
-// model file. Embedded-first, with disk fallback at `<onDiskRoot>/<backend>/model.onnx`.
-// Used by the Fetch RPC to serve weights to clients.
+// model file. Disk-first, with embed fallback. Used by the Fetch RPC to
+// serve weights to clients.
 func WeightsBytes(onDiskRoot, backend string) ([]byte, error) {
-	embedRoot := "weights/" + backend + "/model.onnx"
-	if data, err := fs.ReadFile(Weights, embedRoot); err == nil {
-		return data, nil
-	}
 	if onDiskRoot != "" {
 		path := filepath.Join(onDiskRoot, backend, "model.onnx")
 		if data, err := os.ReadFile(path); err == nil {
 			return data, nil
 		}
 	}
+	embedRoot := "weights/" + backend + "/model.onnx"
+	if data, err := fs.ReadFile(Weights, embedRoot); err == nil {
+		return data, nil
+	}
 	return nil, fmt.Errorf("no weights for backend %q", backend)
 }
 
 // AvailableBackends returns the subset of `candidates` for which weights are
-// available (embedded preferred; disk fallback). Used at startup to decide
-// which backends are loadable.
+// available (disk-first, embed fallback). Used at startup to decide which
+// backends are loadable.
 func AvailableBackends(onDiskRoot string, candidates []string) []string {
 	out := make([]string, 0, len(candidates))
 	for _, b := range candidates {
-		if _, err := fs.Stat(Weights, "weights/"+b+"/model.onnx"); err == nil {
-			out = append(out, b)
-			continue
-		}
 		if onDiskRoot != "" {
 			if _, err := os.Stat(filepath.Join(onDiskRoot, b, "model.onnx")); err == nil {
 				out = append(out, b)
+				continue
 			}
+		}
+		if _, err := fs.Stat(Weights, "weights/"+b+"/model.onnx"); err == nil {
+			out = append(out, b)
 		}
 	}
 	return out
