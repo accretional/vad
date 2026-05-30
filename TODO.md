@@ -2,10 +2,18 @@
 
 Outstanding work in `accretional/vad`. Organized roughly by importance.
 
-## New backends (in flight)
+## New backends
 
-- [ ] **MarbleNet backend** — `nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0`. Benchmark + ONNX export agent running; once latency / parity numbers land, implement `pkg/vad/marblenet.go` against the `Backend` interface. Wire `VAD_MODEL_MARBLENET` in `cmd/vad/main.go`'s switch.
-- [ ] **Silero VAD backend** — `snakers4/silero-vad` (our own conversion, validated against `onnx-community/silero-vad`). Benchmark + ONNX export agent running; implement `pkg/vad/silero.go` once we know it's competitive. Silero is stateful (32 ms / 512-sample chunks with internal hidden state), so the Go impl needs to thread the state across `Detect` calls within a single stream — fits naturally into `DetectStream` since we already buffer; affects `ProcessAudio` slightly because each chunk must run separately rather than as one big batch.
+- [x] ~~Silero VAD backend~~ — done. `pkg/vad/silero.go`. 14 segs / 27.8s on ref clip; per-chunk state threading; bundled ONNX at `weights/silero/model.onnx` (1.26 MiB).
+- [ ] **MarbleNet backend** — `nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0`. Benched + ONNX exported (361 KiB, **3.8 ms/10 s** — the fastest of all backends, ~4× faster than FireRed). Multilingual (zh/en/fr/es/de/ru). Go backend not yet written because it requires a separate feature pipeline distinct from `fbank/` (Kaldi-style):
+  - **Window**: Hann (not Povey/Hamming).
+  - **STFT**: `n_fft=512`, `hop=160`, `win_length=400`. center=True with reflection padding on the waveform (different from our snip_edges=true convention).
+  - **Pre-emphasis**: 0.97 on the whole waveform before framing (not per-frame).
+  - **Mel filterbank**: Slaney scale, 80 bins, 0-8000 Hz (Kaldi uses HTK scale + low-cutoff at 20 Hz).
+  - **Log**: `log(mel + 2^-24)` (not `log(max(mel, eps))`).
+  - **Pad to even**: trailing time-axis padding so `T_mel` is divisible by 2.
+  - **Postprocess**: `softmax(logits)[..., 1]` → per-20ms speech prob → onset/offset hysteresis (0.5/0.3 + min_duration_on=200ms / min_duration_off=100ms).
+  Cleanest path is probably extending `fbank/Options` with `Window=Hann`, `MelType=Slaney`, `PadMode=Center`, `LogOffset` fields. Parity-test against a fixture generated via the existing `marblenet-bench` venv (`/Volumes/wd_office_1/repos/marblenet-bench/.venv` has `nemo_toolkit[asr]` already installed; preprocessor config saved at `weights/marblenet/preprocessor.yaml`). Bench script: `speax/benchmarks/vad/bench_marblenet_onnx.py`. Estimated 2-3 hours focused work.
 
 ## Streaming RPC scaffolding
 
