@@ -28,3 +28,6 @@ cmd/pkg-example/segmented-output/
 cmd/pkg-example/unsegmented-output/
 cmd/pkg-example/input/
 cmd/basic-vad-web/basic-vad-web
+cmd/basic-vad-web/audio-server
+# Built one-off by ad-hoc `go build` invocations at the repo root.
+/basic-vad-web

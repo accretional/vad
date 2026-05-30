@@ -12,16 +12,22 @@
 #   demo (:8080)   — HTTP front, serves embedded UI + proxies both backends
 #
 # Usage:
-#   ./run.sh                              # pyannote on :50051, audio on :50052, demo on :8080
-#   ./run.sh --backend silero             # any single vad backend
-#   PORT=9000 ./run.sh                    # change demo HTTP port
-#   VAD_PORT=50055 ./run.sh               # change vad gRPC port
-#   AUDIO_PORT=50066 ./run.sh             # change audio gRPC port
-#   AUDIO_REPO=/path/to/speax/audio       # override sibling-checkout path
+#   ./run.sh                                                 # pyannote on :50051, audio on :50052, demo on :8080
+#   ./run.sh --backend silero                                # any single vad backend
+#   ./run.sh --audio-repo /path/to/speax/audio               # explicit audio repo path
+#   PORT=9000 ./run.sh                                       # change demo HTTP port
+#   VAD_PORT=50055 ./run.sh                                  # change vad gRPC port
+#   AUDIO_PORT=50066 ./run.sh                                # change audio gRPC port
+#
+# Precedence for the speax/audio checkout:
+#   1. --audio-repo <path>      (CLI flag)
+#   2. $AUDIO_REPO              (env var)
+#   3. ../speax/audio           (sibling-of-this-repo default)
+# Fails fast if none of those resolve to a directory.
 #
 # Requires ./bin/vad to already exist. Run ./build-native.sh first if not.
-# Also requires a sibling checkout of speax/audio (default: ../speax/audio
-# from this repo's root) — the audio server binary is built from there.
+# Also requires a checkout of speax/audio (https://github.com/accretional/speax)
+# whose audio/ subdir provides the MediaConverter gRPC server binary.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,15 +38,22 @@ HTTP_PORT="${PORT:-8080}"
 VAD_PORT="${VAD_PORT:-50051}"
 AUDIO_PORT="${AUDIO_PORT:-50052}"
 VAD_BIN="$REPO_ROOT/bin/vad"
-AUDIO_REPO="${AUDIO_REPO:-$REPO_ROOT/../speax/audio}"
 
 BACKEND="pyannote"
+AUDIO_REPO_ARG=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --backend) BACKEND="$2"; shift 2 ;;
+        --audio-repo) AUDIO_REPO_ARG="$2"; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
+
+if [ -n "$AUDIO_REPO_ARG" ]; then
+    AUDIO_REPO="$AUDIO_REPO_ARG"
+else
+    AUDIO_REPO="${AUDIO_REPO:-$REPO_ROOT/../speax/audio}"
+fi
 
 if [ ! -x "$VAD_BIN" ]; then
     echo "ERROR: $VAD_BIN not found. Run ./build-native.sh first." >&2
@@ -49,7 +62,8 @@ fi
 
 if [ ! -d "$AUDIO_REPO" ]; then
     echo "ERROR: speax/audio checkout not found at $AUDIO_REPO." >&2
-    echo "       Set AUDIO_REPO=/path/to/speax/audio or clone it as a sibling of this repo." >&2
+    echo "       Pass --audio-repo /path/to/speax/audio, set AUDIO_REPO=..., or clone" >&2
+    echo "       https://github.com/accretional/speax as a sibling of this repo." >&2
     exit 1
 fi
 
