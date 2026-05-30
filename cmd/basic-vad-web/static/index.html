@@ -9,7 +9,7 @@
 <body>
     <header>
         <h1>Voice Activity Detection</h1>
-        <p class="subtitle">Compare segmentations across multiple VAD backends, then try live streaming over WebSocket.</p>
+        <p class="subtitle">Compare segmentations across multiple VAD backends in your browser, plus live streaming over WebSocket to the gRPC server.</p>
     </header>
 
     <main class="container">
@@ -19,7 +19,7 @@
         </section>
 
         <section id="batch-section" class="card">
-            <h2>1. Compare backends on a clip</h2>
+            <h2>1. Compare backends on a clip (in-browser inference)</h2>
 
             <div class="source-picker">
                 <div class="source-option">
@@ -55,6 +55,8 @@
                 <span id="batch-status" class="status-inline"></span>
             </div>
 
+            <div id="progress-log" class="progress-log"></div>
+
             <div id="results" class="results hidden">
                 <h3>Results</h3>
                 <canvas id="timeline-canvas" width="900" height="200"></canvas>
@@ -64,14 +66,13 @@
         </section>
 
         <section id="live-section" class="card">
-            <h2>2. Live streaming (WebSocket -> DetectStream)</h2>
-            <p class="hint">Speak into your mic. We send ~100 ms float32 chunks to the selected backend and render activity events as they arrive.</p>
+            <h2>2. Live streaming (WebSocket -> server DetectStream)</h2>
+            <p class="hint">Speak into your mic. We send ~100 ms float32 chunks to the demo server, which bridges them to the loaded <code>VoiceSegmentation.DetectStream</code> gRPC RPC. Activity events render as they arrive.</p>
 
             <div class="live-controls">
-                <label for="live-model">Backend:</label>
-                <select id="live-model"></select>
                 <button id="live-start">Start mic</button>
                 <button id="live-stop" disabled>Stop</button>
+                <span id="live-backend-label" class="hint"></span>
             </div>
 
             <div class="live-state">
@@ -84,6 +85,6 @@
         </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script type="module" src="/static/app.js"></script>
 </body>
 </html>

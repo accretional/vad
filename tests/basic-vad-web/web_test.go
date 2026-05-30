@@ -1,10 +1,24 @@
+// Integration tests for cmd/basic-vad-web. Builds the demo binary, runs it
+// without a backing vad gRPC server (so /describe falls back to canned method
+// list + /aux is satisfied from the embedded weights tree), and exercises
+// the small set of HTTP endpoints the browser actually relies on:
+//
+//   GET /                    — index.html
+//   GET /static/style.css    — CSS
+//   GET /static/app.js       — main app module
+//   GET /static/js/engine.js — engine module the app imports
+//   GET /describe            — JSON metadata
+//   GET /aux/fsmn-vad/am.mvn — embedded aux file
+//   GET /aux/...../bogus     — 403 (not on allowlist)
+//   GET /nonexistent         — 404
+//
+// Tests that need a live gRPC backend (Fetch RPC, /socket bridge) live in
+// tests/e2e and tests/fetch.
 package basicvadweb_test
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,7 +36,6 @@ var serverCmd *exec.Cmd
 func TestMain(m *testing.M) {
 	repoRoot := findRepoRoot()
 
-	// Build the binary
 	binPath := filepath.Join(repoRoot, "cmd", "basic-vad-web", "basic-vad-web")
 	build := exec.Command("go", "build", "-o", binPath, "./cmd/basic-vad-web/")
 	build.Dir = repoRoot
@@ -33,35 +46,20 @@ func TestMain(m *testing.M) {
 	}
 	defer os.Remove(binPath)
 
-	// Find ORT library
-	libPath := findORTLib(repoRoot)
-	if libPath == "" {
-		panic("ONNX Runtime library not found")
-	}
-
-	// Start server
+	// Run pointing at a deliberately unreachable vad addr; the endpoints
+	// we test in this package don't need the gRPC backend up.
 	serverCmd = exec.Command(binPath,
 		"-port", serverPort,
-		"-model", filepath.Join(repoRoot, "weights", "model.onnx"),
-		"-lib", libPath,
+		"-vad-addr", "127.0.0.1:1",
 	)
 	serverCmd.Dir = repoRoot
 	serverCmd.Stdout = os.Stdout
 	serverCmd.Stderr = os.Stderr
 
-	if runtime.GOOS == "darwin" {
-		serverCmd.Env = append(os.Environ(),
-			"DYLD_LIBRARY_PATH="+filepath.Dir(libPath))
-	} else {
-		serverCmd.Env = append(os.Environ(),
-			"LD_LIBRARY_PATH="+filepath.Dir(libPath))
-	}
-
 	if err := serverCmd.Start(); err != nil {
 		panic("failed to start server: " + err.Error())
 	}
 
-	// Wait for server to be ready
 	ready := false
 	for i := 0; i < 30; i++ {
 		time.Sleep(500 * time.Millisecond)
@@ -101,44 +99,21 @@ func findRepoRoot() string {
 	}
 }
 
-func findORTLib(repoRoot string) string {
-	if p := os.Getenv("ONNXRUNTIME_LIB"); p != "" {
-		return p
-	}
-	candidates := []string{
-		"third_party/onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.dylib",
-		"third_party/onnxruntime-osx-x86_64-1.22.0/lib/libonnxruntime.dylib",
-		"third_party/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so",
-		"third_party/onnxruntime-linux-aarch64-1.22.0/lib/libonnxruntime.so",
-	}
-	for _, c := range candidates {
-		p := filepath.Join(repoRoot, c)
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
 func TestIndexHTML(t *testing.T) {
 	resp, err := http.Get("http://127.0.0.1:" + serverPort + "/")
 	if err != nil {
 		t.Fatalf("GET / failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "text/html") {
 		t.Errorf("expected text/html content-type, got %q", ct)
 	}
-
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
-
 	if !strings.Contains(html, "Voice Activity Detection") {
 		t.Error("index.html missing expected title")
 	}
@@ -148,6 +123,9 @@ func TestIndexHTML(t *testing.T) {
 	if !strings.Contains(html, "app.js") {
 		t.Error("index.html missing app.js script")
 	}
+	if !strings.Contains(html, `type="module"`) {
+		t.Error("index.html missing <script type=\"module\">")
+	}
 }
 
 func TestStyleCSS(t *testing.T) {
@@ -156,16 +134,13 @@ func TestStyleCSS(t *testing.T) {
 		t.Fatalf("GET /static/style.css failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "css") {
 		t.Errorf("expected css content-type, got %q", ct)
 	}
-
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), ".container") {
 		t.Error("style.css missing expected content")
@@ -178,19 +153,105 @@ func TestAppJS(t *testing.T) {
 		t.Fatalf("GET /static/app.js failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "javascript") {
 		t.Errorf("expected javascript content-type, got %q", ct)
 	}
-
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "/api/detect") {
-		t.Error("app.js missing expected content")
+	// Sanity-check that app.js is the new ES module (imports engine).
+	if !strings.Contains(string(body), "engine.js") {
+		t.Error("app.js missing engine.js import (stale build?)")
+	}
+}
+
+func TestEngineModuleServed(t *testing.T) {
+	// engine.js / worker.js / per-backend modules all live under /static/js/.
+	for _, path := range []string{
+		"/static/js/engine.js",
+		"/static/js/worker.js",
+		"/static/js/cache.js",
+		"/static/js/dsp/fft.js",
+		"/static/js/backends/pyannote.js",
+		"/static/js/backends/silero.js",
+	} {
+		resp, err := http.Get("http://127.0.0.1:" + serverPort + path)
+		if err != nil {
+			t.Errorf("GET %s failed: %v", path, err)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Errorf("GET %s: status %d", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	resp, err := http.Get("http://127.0.0.1:" + serverPort + "/describe")
+	if err != nil {
+		t.Fatalf("GET /describe failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var got struct {
+		Service string `json:"service"`
+		Methods []string `json:"methods"`
+		Models  []struct {
+			Name      string `json:"name"`
+			ShortName string `json:"short_name"`
+		} `json:"models"`
+		VadAddr string `json:"vad_addr"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Service != "vad.VoiceSegmentation" {
+		t.Errorf("service = %q", got.Service)
+	}
+	if len(got.Models) < 5 {
+		t.Errorf("expected ≥5 models, got %d", len(got.Models))
+	}
+	if got.VadAddr != "127.0.0.1:1" {
+		t.Errorf("vad_addr = %q, want 127.0.0.1:1", got.VadAddr)
+	}
+	if len(got.Methods) == 0 {
+		t.Errorf("expected non-empty methods (fallback list)")
+	}
+}
+
+func TestAuxEmbeddedFile(t *testing.T) {
+	// am.mvn should be embedded under internal/embedded/weights/fsmn-vad/.
+	// The demo's /aux endpoint reads from that same embedded FS.
+	resp, err := http.Get("http://127.0.0.1:" + serverPort + "/aux/fsmn-vad/am.mvn")
+	if err != nil {
+		t.Fatalf("GET /aux/fsmn-vad/am.mvn failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		t.Skip("am.mvn not embedded in this build (run prep-embed.sh)")
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) < 100 {
+		t.Errorf("am.mvn served back as %d bytes, expected ≥100", len(body))
+	}
+}
+
+func TestAuxRejectsUnknownFile(t *testing.T) {
+	resp, err := http.Get("http://127.0.0.1:" + serverPort + "/aux/fsmn-vad/secret.txt")
+	if err != nil {
+		t.Fatalf("GET aux unknown: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 for non-allowlisted aux file, got %d", resp.StatusCode)
 	}
 }
 
@@ -200,74 +261,7 @@ func TestNotFoundReturns404(t *testing.T) {
 		t.Fatalf("GET /nonexistent failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 404 {
 		t.Errorf("expected 404, got %d", resp.StatusCode)
 	}
-}
-
-func TestAPIDetectSilence(t *testing.T) {
-	// Send 1s of silence as float32 PCM
-	silence := make([]float32, 16000)
-	buf := float32ToBytes(silence)
-
-	resp, err := http.Post(
-		"http://127.0.0.1:"+serverPort+"/api/detect",
-		"application/octet-stream",
-		strings.NewReader(string(buf)),
-	)
-	if err != nil {
-		t.Fatalf("POST /api/detect failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
-	}
-
-	var result struct {
-		Segments []struct {
-			Start      float64 `json:"start"`
-			End        float64 `json:"end"`
-			SpeakerID  int     `json:"speaker_id"`
-			Confidence float32 `json:"confidence"`
-		} `json:"segments"`
-		Duration float64 `json:"duration"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if len(result.Segments) != 0 {
-		t.Errorf("expected 0 segments for silence, got %d", len(result.Segments))
-	}
-	if result.Duration < 0.9 || result.Duration > 1.1 {
-		t.Errorf("expected duration ~1.0, got %.3f", result.Duration)
-	}
-}
-
-func TestAPIDetectEmpty(t *testing.T) {
-	resp, err := http.Post(
-		"http://127.0.0.1:"+serverPort+"/api/detect",
-		"application/octet-stream",
-		strings.NewReader(""),
-	)
-	if err != nil {
-		t.Fatalf("POST /api/detect failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 400 {
-		t.Errorf("expected 400 for empty body, got %d", resp.StatusCode)
-	}
-}
-
-func float32ToBytes(samples []float32) []byte {
-	buf := make([]byte, len(samples)*4)
-	for i, s := range samples {
-		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(s))
-	}
-	return buf
 }

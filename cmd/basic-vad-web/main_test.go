@@ -1,12 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
-	"io"
 	"io/fs"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,8 +14,9 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Static asset sanity checks (carried over from the pre-multi-backend demo —
-// kept so we don't silently ship an empty / broken index.html again).
+// Static asset sanity checks. The browser engine fans out into a bunch of
+// modules (engine.js + worker.js + per-backend pipelines + dsp/) and a typo
+// in the embed glob would silently drop one. These tests catch that.
 // ---------------------------------------------------------------------------
 
 func TestStaticFSContainsIndex(t *testing.T) {
@@ -40,6 +37,9 @@ func TestStaticFSContainsIndex(t *testing.T) {
 	if !strings.Contains(html, "app.js") {
 		t.Error("index.html missing app.js reference")
 	}
+	if !strings.Contains(html, `type="module"`) {
+		t.Error("index.html missing <script type=\"module\"> (app.js is an ES module)")
+	}
 }
 
 func TestStaticFSContainsCSS(t *testing.T) {
@@ -52,25 +52,33 @@ func TestStaticFSContainsCSS(t *testing.T) {
 	}
 }
 
-func TestStaticFSContainsJS(t *testing.T) {
-	data, err := staticFS.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("failed to read static/app.js: %v", err)
+func TestStaticFSContainsEngine(t *testing.T) {
+	// app.js imports engine.js, engine.js imports worker.js + cache.js, worker
+	// dynamically imports backends/<name>.js + dsp/*.js. Confirm the whole
+	// tree shipped — embed.FS picks `static/*` so subdirectories need to
+	// actually be present, not just declared.
+	wantPaths := []string{
+		"static/app.js",
+		"static/js/engine.js",
+		"static/js/worker.js",
+		"static/js/cache.js",
+		"static/js/dsp/fft.js",
+		"static/js/dsp/fbank.js",
+		"static/js/dsp/melspec.js",
+		"static/js/backends/pyannote.js",
+		"static/js/backends/fsmn.js",
+		"static/js/backends/firered.js",
+		"static/js/backends/silero.js",
+		"static/js/backends/marblenet.js",
 	}
-	js := string(data)
-	if !strings.Contains(js, "/detect") {
-		t.Error("app.js missing /detect endpoint")
-	}
-	if !strings.Contains(js, "/describe") {
-		t.Error("app.js missing /describe endpoint")
-	}
-	if !strings.Contains(js, "/socket") {
-		t.Error("app.js missing /socket WebSocket endpoint")
+	for _, p := range wantPaths {
+		if _, err := staticFS.ReadFile(p); err != nil {
+			t.Errorf("missing embedded asset %s: %v", p, err)
+		}
 	}
 }
 
 func TestStaticFSContainsSamples(t *testing.T) {
-	// Bundled samples must all be embedded so the page can fetch them.
 	wantNames := []string{
 		"static/samples/bestfriends.mp3",
 		"static/samples/sorry-dave.mp3",
@@ -84,9 +92,7 @@ func TestStaticFSContainsSamples(t *testing.T) {
 }
 
 func TestStaticFSFileCount(t *testing.T) {
-	// Loose lower bound: 3 ui files + 3 samples. Lets us add more files
-	// without breaking the test, but catches the "embed wildcard isn't
-	// picking up samples/" regression.
+	// Loose lower bound: 3 ui files + 3 samples + 8+ JS modules.
 	var count int
 	_ = fs.WalkDir(staticFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -97,42 +103,8 @@ func TestStaticFSFileCount(t *testing.T) {
 		}
 		return nil
 	})
-	if count < 6 {
-		t.Errorf("expected at least 6 static files (ui + samples), got %d", count)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// parseVADAddrs
-// ---------------------------------------------------------------------------
-
-func TestParseVADAddrs(t *testing.T) {
-	parsed, def, err := parseVADAddrs("PYANNOTE=localhost:50051,FSMN=localhost:50052,silero=h:1")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if def != pb.VADModel_VAD_MODEL_PYANNOTE {
-		t.Errorf("default = %v, want PYANNOTE", def)
-	}
-	if parsed[pb.VADModel_VAD_MODEL_FSMN] != "localhost:50052" {
-		t.Errorf("FSMN addr = %q, want localhost:50052", parsed[pb.VADModel_VAD_MODEL_FSMN])
-	}
-	if parsed[pb.VADModel_VAD_MODEL_SILERO] != "h:1" {
-		t.Errorf("SILERO addr = %q, want h:1", parsed[pb.VADModel_VAD_MODEL_SILERO])
-	}
-
-	// Full-form keys.
-	_, _, err = parseVADAddrs("VAD_MODEL_PYANNOTE=x:1")
-	if err != nil {
-		t.Errorf("full-form key should parse: %v", err)
-	}
-
-	// Bad inputs.
-	if _, _, err := parseVADAddrs("PYANNOTE"); err == nil {
-		t.Errorf("expected error on key without =")
-	}
-	if _, _, err := parseVADAddrs("BOGUS=x:1"); err == nil {
-		t.Errorf("expected error on unknown model")
+	if count < 14 {
+		t.Errorf("expected at least 14 static files (ui + samples + js modules), got %d", count)
 	}
 }
 
@@ -141,8 +113,8 @@ func TestParseVADAddrs(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandleDescribeJSONShape(t *testing.T) {
-	// Dial an unreachable address so reflection definitely fails — we want to
-	// confirm the handler still returns 200 + the fallback Methods list.
+	// Dial an unreachable address so reflection definitely fails — confirm
+	// the handler still returns 200 + the fallback Methods list.
 	conn, err := grpc.NewClient("localhost:1",
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -150,10 +122,9 @@ func TestHandleDescribeJSONShape(t *testing.T) {
 	}
 	defer conn.Close()
 	a := &app{
-		clients: map[pb.VADModel]*backendClient{
-			pb.VADModel_VAD_MODEL_PYANNOTE: {addr: "localhost:1", conn: conn, client: pb.NewVoiceSegmentationClient(conn)},
-		},
-		defaultModel: pb.VADModel_VAD_MODEL_PYANNOTE,
+		vadAddr:   "localhost:1",
+		vadClient: pb.NewVoiceSegmentationClient(conn),
+		vadConn:   conn,
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/describe", nil)
@@ -172,134 +143,52 @@ func TestHandleDescribeJSONShape(t *testing.T) {
 	if len(resp.Models) != len(allKnownModels) {
 		t.Errorf("Models len = %d, want %d", len(resp.Models), len(allKnownModels))
 	}
-	// Pyannote should be the only available model.
-	var available []string
-	for _, m := range resp.Models {
-		if m.Available {
-			available = append(available, m.Name)
-		}
+	if resp.VadAddr != "localhost:1" {
+		t.Errorf("VadAddr = %q, want localhost:1", resp.VadAddr)
 	}
-	if len(available) != 1 || available[0] != "VAD_MODEL_PYANNOTE" {
-		t.Errorf("available = %v, want [VAD_MODEL_PYANNOTE]", available)
-	}
-	// Reflection failed -> fallback methods kicked in.
 	if len(resp.Methods) == 0 {
 		t.Errorf("expected fallback Methods list")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// /detect — exercise the multipart + per-model fanout path using a mocked
-// gRPC client. We swap in a stub by directly setting backendClient.client to
-// a custom implementation.
+// /aux allowlist
 // ---------------------------------------------------------------------------
 
-type fakeVADClient struct {
-	pb.VoiceSegmentationClient // embed for forward-compat
-	detect                     func(ctx context.Context, in *pb.Audio, opts ...grpc.CallOption) (*pb.Diarization, error)
-}
-
-func (f *fakeVADClient) Detect(ctx context.Context, in *pb.Audio, opts ...grpc.CallOption) (*pb.Diarization, error) {
-	return f.detect(ctx, in, opts...)
-}
-
-func TestHandleDetectMultipart(t *testing.T) {
-	// Build the multipart body: 100 ms of silent f32 PCM at 16 kHz.
-	const samples = 1600
-	pcm := make([]byte, samples*4) // all zero -> silent
-	body := &bytes.Buffer{}
-	mw := multipart.NewWriter(body)
-	fw, _ := mw.CreateFormFile("audio", "audio.f32le")
-	_, _ = fw.Write(pcm)
-	_ = mw.WriteField("encoding", "f32le")
-	_ = mw.WriteField("model", "PYANNOTE")
-	_ = mw.WriteField("model", "FSMN")
-	mw.Close()
-
-	// Wire up app with two fake backends.
-	a := &app{
-		clients: map[pb.VADModel]*backendClient{
-			pb.VADModel_VAD_MODEL_PYANNOTE: {
-				addr: "fake-pyannote",
-				client: &fakeVADClient{detect: func(_ context.Context, in *pb.Audio, _ ...grpc.CallOption) (*pb.Diarization, error) {
-					if len(in.Samples) != len(pcm) {
-						t.Errorf("PYANNOTE got %d bytes, want %d", len(in.Samples), len(pcm))
-					}
-					return &pb.Diarization{
-						Segments: []*pb.Segment{
-							{Start: 0.0, End: 0.05, SpeakerId: 0, Confidence: 0.9},
-						},
-					}, nil
-				}},
-			},
-			pb.VADModel_VAD_MODEL_FSMN: {
-				addr: "fake-fsmn",
-				client: &fakeVADClient{detect: func(_ context.Context, _ *pb.Audio, _ ...grpc.CallOption) (*pb.Diarization, error) {
-					return &pb.Diarization{Segments: nil}, nil
-				}},
-			},
-		},
-		defaultModel: pb.VADModel_VAD_MODEL_PYANNOTE,
+func TestHandleAuxRejectsTraversal(t *testing.T) {
+	a := &app{weightsRoot: ""}
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"/aux/", http.StatusBadRequest},                          // missing dir+file
+		{"/aux/fsmn-vad/", http.StatusBadRequest},                 // missing file
+		{"/aux/fsmn-vad/..%2Fmodel.onnx", http.StatusBadRequest},  // URL-decoded contains .. and /
+		{"/aux/fsmn-vad/../model.onnx", http.StatusBadRequest},    // explicit traversal — http.ServeMux may rewrite; test handler directly
+		{"/aux/unknown-dir/foo", http.StatusNotFound},             // not in allowlist
+		{"/aux/fsmn-vad/not-allowed", http.StatusForbidden},       // file not in allowlist
 	}
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodGet, c.path, nil)
+		rec := httptest.NewRecorder()
+		a.handleAux(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("path %s: status = %d, want %d (body: %s)", c.path, rec.Code, c.want, rec.Body.String())
+		}
+	}
+}
 
-	req := httptest.NewRequest(http.MethodPost, "/detect", body)
-	req.Header.Set("Content-Type", mw.FormDataContentType())
+func TestHandleAuxServesAllowedFile(t *testing.T) {
+	// am.mvn is on the allowlist AND embedded in the weights tree. Confirm
+	// the handler streams it back.
+	a := &app{weightsRoot: ""}
+	req := httptest.NewRequest(http.MethodGet, "/aux/fsmn-vad/am.mvn", nil)
 	rec := httptest.NewRecorder()
-	a.handleDetect(rec, req)
-
+	a.handleAux(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		t.Skipf("am.mvn not embedded in this build (run prep-embed.sh): status %d", rec.Code)
 	}
-	var resp detectResponseJSON
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.AudioDurationSeconds < 0.099 || resp.AudioDurationSeconds > 0.101 {
-		t.Errorf("AudioDurationSeconds = %f, want ~0.1", resp.AudioDurationSeconds)
-	}
-	if len(resp.Results) != 2 {
-		t.Fatalf("Results len = %d, want 2", len(resp.Results))
-	}
-	// Build a lookup so order doesn't matter.
-	byShort := map[string]detectModelResultJSON{}
-	for _, r := range resp.Results {
-		byShort[r.ShortName] = r
-	}
-	if py, ok := byShort["PYANNOTE"]; !ok || len(py.Segments) != 1 {
-		t.Errorf("expected PYANNOTE with 1 segment, got %+v", py)
-	}
-	if fsmn, ok := byShort["FSMN"]; !ok || len(fsmn.Segments) != 0 {
-		t.Errorf("expected FSMN with 0 segments (empty list), got %+v", fsmn)
+	if rec.Body.Len() < 100 {
+		t.Errorf("am.mvn served back as %d bytes, expected ≥100", rec.Body.Len())
 	}
 }
-
-func TestHandleDetectRejectsBadInputs(t *testing.T) {
-	a := &app{
-		clients:      map[pb.VADModel]*backendClient{},
-		defaultModel: pb.VADModel_VAD_MODEL_PYANNOTE,
-	}
-
-	// Wrong method.
-	req := httptest.NewRequest(http.MethodGet, "/detect", nil)
-	rec := httptest.NewRecorder()
-	a.handleDetect(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("GET status = %d, want 405", rec.Code)
-	}
-
-	// Missing model field.
-	body := &bytes.Buffer{}
-	mw := multipart.NewWriter(body)
-	fw, _ := mw.CreateFormFile("audio", "x.f32")
-	_, _ = io.Copy(fw, bytes.NewReader(make([]byte, 4)))
-	_ = mw.WriteField("encoding", "f32le")
-	mw.Close()
-	req = httptest.NewRequest(http.MethodPost, "/detect", body)
-	req.Header.Set("Content-Type", mw.FormDataContentType())
-	rec = httptest.NewRecorder()
-	a.handleDetect(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("missing-model status = %d, want 400", rec.Code)
-	}
-}
-
