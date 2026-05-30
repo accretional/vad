@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Release Review — {{.Tag}}</title>
+<style>
+  body { font: 14px/1.45 system-ui, sans-serif; max-width: 920px; margin: 32px auto; padding: 0 16px; color: #1d1d1f; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .subtitle { color: #666; margin-bottom: 24px; }
+  section { background: #f7f7f9; border-radius: 8px; padding: 14px 18px; margin: 12px 0; }
+  section h2 { margin: 0 0 8px; font-size: 14px; color: #444; text-transform: uppercase; letter-spacing: .04em; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { padding: 4px 8px 4px 0; vertical-align: top; }
+  td:first-child { color: #666; width: 180px; white-space: nowrap; }
+  td.mono { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+  a { color: #06c; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul { margin: 6px 0; padding-left: 22px; }
+  .ok    { color: #1b7e1b; font-weight: 600; }
+  .fail  { color: #b00020; font-weight: 600; }
+  .warn  { color: #a85d00; font-weight: 600; }
+  .actions { display: flex; gap: 12px; margin-top: 22px; padding: 12px 0; border-top: 1px solid #ddd; }
+  button { font: inherit; padding: 10px 22px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; }
+  .accept { background: #1b7e1b; color: white; }
+  .accept:hover { background: #1d8a1d; }
+  .reject { background: #eee; color: #333; }
+  .reject:hover { background: #ddd; }
+  .done   { padding: 36px; text-align: center; font-size: 20px; }
+</style>
+</head>
+<body>
+<div id="content">
+  <h1>Release Review</h1>
+  <div class="subtitle">{{.Tag}} · committed {{.Date}}</div>
+
+  <section>
+    <h2>Provenance</h2>
+    <table>
+      <tr><td>Tag</td><td class="mono">{{.Tag}}</td></tr>
+      <tr><td>Git SHA</td><td class="mono">{{.GitSHA}}</td></tr>
+      <tr><td>Branch</td><td class="mono">{{.GitBranch}}</td></tr>
+      <tr><td>Host</td><td class="mono">{{.BuildHost}} ({{.BuildOSArch}})</td></tr>
+      <tr><td>Builder</td><td class="mono">{{.BuildUser}}</td></tr>
+      <tr><td>Started</td><td class="mono">{{.BuildStarted}}</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Artifacts</h2>
+    <table>
+      {{range .Artifacts}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td class="mono">{{.Path}}<br>{{.Size}} · sha256:{{.SHA256}}</td>
+      </tr>
+      {{end}}
+    </table>
+  </section>
+
+  <section>
+    <h2>Validation results</h2>
+    <table>
+      {{range .Validations}}
+      <tr>
+        <td>{{.Name}} (:{{.Port}})</td>
+        <td>
+          {{if .OK}}<span class="ok">PASS</span>{{else}}<span class="fail">FAIL</span>{{end}}
+          · <a href="/logs/{{.LogPath}}">log</a>
+        </td>
+      </tr>
+      {{end}}
+    </table>
+  </section>
+
+  <section>
+    <h2>All logs</h2>
+    <ul>
+      {{range .Logs}}<li><a href="/logs/{{.Path}}">{{.Name}}</a></li>{{end}}
+    </ul>
+  </section>
+
+  {{if .HasFailures}}
+  <section style="background:#fde7e9;border:1px solid #f5b5bd">
+    <h2 style="color:#b00020">Failures detected</h2>
+    <p>One or more validation steps failed. Review the logs above before deciding.
+       Releasing now will still produce the zip and push, but you probably don't want that.</p>
+  </section>
+  {{end}}
+
+  <div class="actions">
+    <button class="accept" onclick="decide('accept')">ACCEPT &amp; RELEASE</button>
+    <button class="reject" onclick="decide('reject')">CANCEL</button>
+  </div>
+</div>
+
+<script>
+async function decide(verdict) {
+  const r = await fetch('/decision', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({verdict})});
+  const text = await r.text();
+  document.getElementById('content').innerHTML =
+    '<div class="done">' + (verdict === 'accept' ? '✅ Release accepted' : '❌ Release cancelled') +
+    '<br><small>You can close this tab.</small></div>';
+}
+</script>
+</body>
+</html>
