@@ -8,6 +8,8 @@ weights/*
 # the box. Regen via speax/benchmarks/vad/export_*_to_onnx.py if needed.
 !weights/fsmn-vad/
 !weights/firered-vad/
+!weights/marblenet/
+!weights/silero/
 /vad
 third_party/
 *.f32
