@@ -17,6 +17,12 @@ import (
 // which checks embedded files first and falls back to on-disk weights/.
 type FetchBytesFunc func(model pb.VADModel) ([]byte, error)
 
+// FetchURLFunc returns a CDN URL for the given model's .onnx weights, if one
+// is available (typically from a url.txt sidecar embedded next to the model).
+// Returning ("", false) means no URL is registered for this model and the
+// server falls back to streaming bytes via FetchBytesFunc.
+type FetchURLFunc func(model pb.VADModel) (string, bool)
+
 // Server implements the VoiceSegmentation gRPC service.
 //
 // Holds exactly one inference backend (loaded at startup from VADConfig.model).
@@ -29,6 +35,7 @@ type Server struct {
 	backend      vad.Backend
 	defaultModel pb.VADModel
 	fetchBytes   FetchBytesFunc
+	fetchURL     FetchURLFunc
 	weightsURL   string
 }
 
@@ -40,15 +47,19 @@ type Server struct {
 //   - fetchBytes: closure that returns raw ONNX bytes for ANY backend; called
 //     by Fetch when the client wants weights without proxying through the
 //     server's CDN-style URL.
-//   - weightsURL: optional. If set AND the Fetch request targets defaultModel,
-//     the server redirects clients to this URL instead of streaming bytes.
-//     Useful for browser clients (e.g. transformers.js) that prefer a CDN
-//     download.
-func New(backend vad.Backend, defaultModel pb.VADModel, fetchBytes FetchBytesFunc, weightsURL string) *Server {
+//   - fetchURL: optional closure returning a per-model CDN URL when one is
+//     registered (e.g. via a url.txt sidecar). When non-nil and the requested
+//     model has a URL, Fetch returns that URL and skips streaming bytes.
+//   - weightsURL: optional global override. If set AND the Fetch request
+//     targets defaultModel AND fetchURL didn't supply a per-model URL, the
+//     server redirects clients to this URL instead of streaming bytes.
+//     Retained for back-compat with the -weights-url flag.
+func New(backend vad.Backend, defaultModel pb.VADModel, fetchBytes FetchBytesFunc, fetchURL FetchURLFunc, weightsURL string) *Server {
 	return &Server{
 		backend:      backend,
 		defaultModel: defaultModel,
 		fetchBytes:   fetchBytes,
+		fetchURL:     fetchURL,
 		weightsURL:   weightsURL,
 	}
 }
@@ -253,12 +264,24 @@ func (s *Server) DetectStream(stream pb.VoiceSegmentation_DetectStreamServer) er
 //   - `model` specified: return weights for that backend (works for any
 //     backend whose weights are embedded or on disk, not just the one
 //     currently loaded for Detect).
-//   - `weightsURL` is honoured only when the requested model matches
-//     defaultModel (the URL was registered for that specific model).
+//
+// Response precedence (first applicable wins):
+//  1. Per-model URL from fetchURL (typically a url.txt sidecar) — applies to
+//     ANY requested model.
+//  2. Global weightsURL configured at startup — applies only when the
+//     requested model matches defaultModel (the URL was registered for it).
+//  3. Raw bytes from fetchBytes.
 func (s *Server) Fetch(ctx context.Context, req *pb.FetchRequest) (*pb.FetchResponse, error) {
 	model := req.GetModel()
 	if model == pb.VADModel_VAD_MODEL_UNSPECIFIED {
 		model = s.defaultModel
+	}
+	if s.fetchURL != nil {
+		if url, ok := s.fetchURL(model); ok {
+			return &pb.FetchResponse{
+				Result: &pb.FetchResponse_Url{Url: url},
+			}, nil
+		}
 	}
 	if model == s.defaultModel && s.weightsURL != "" {
 		return &pb.FetchResponse{

@@ -258,6 +258,16 @@ func main() {
 		}
 		return embedded.WeightsBytes(onDiskWeightsRoot, name)
 	}
+	// Per-model URL lookup: returns the contents of url.txt (embedded-first,
+	// disk fallback) so the Fetch RPC can redirect browser clients to a CDN
+	// download instead of streaming bytes through gRPC.
+	fetchURL := func(m pb.VADModel) (string, bool) {
+		name, ok := backendDirName(m)
+		if !ok {
+			return "", false
+		}
+		return embedded.WeightsURL(onDiskWeightsRoot, name)
+	}
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {
@@ -269,7 +279,7 @@ func main() {
 		grpc.MaxRecvMsgSize(32*1024*1024),
 	)
 	pb.RegisterVoiceSegmentationServer(grpcServer,
-		server.New(backend, cfg.Model, fetchBytes, cfg.WeightsUrl))
+		server.New(backend, cfg.Model, fetchBytes, fetchURL, cfg.WeightsUrl))
 	reflection.Register(grpcServer)
 
 	go func() {

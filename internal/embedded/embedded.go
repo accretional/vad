@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Weights is the embedded weights tree. Files mirror the on-disk weights/
@@ -102,6 +103,48 @@ func ResolveWeights(onDiskRoot, backend string) (dir, tempDir string, err error)
 		}
 	}
 	return "", "", fmt.Errorf("no weights for backend %q (not embedded, not on disk at %q)", backend, onDiskRoot)
+}
+
+// WeightsURL returns the CDN URL stored in the backend's url.txt sidecar, if
+// any. Resolution mirrors WeightsBytes (embedded-first, disk fallback):
+//
+//  1. If the embedded `weights/<backend>/url.txt` exists, return its trimmed
+//     contents.
+//  2. Otherwise, if `<onDiskRoot>/<backend>/url.txt` exists, return its trimmed
+//     contents.
+//  3. Otherwise return ("", false).
+//
+// Used by the Fetch RPC to redirect clients to a CDN download (much smaller
+// payload through the gRPC pipe — clients fetch the .onnx directly from the
+// returned HTTPS URL). The convention is one line per file: a single URL.
+func WeightsURL(onDiskRoot, backend string) (string, bool) {
+	embedPath := "weights/" + backend + "/url.txt"
+	if data, err := fs.ReadFile(Weights, embedPath); err == nil {
+		if s := firstNonEmptyLine(string(data)); s != "" {
+			return s, true
+		}
+	}
+	if onDiskRoot != "" {
+		path := filepath.Join(onDiskRoot, backend, "url.txt")
+		if data, err := os.ReadFile(path); err == nil {
+			if s := firstNonEmptyLine(string(data)); s != "" {
+				return s, true
+			}
+		}
+	}
+	return "", false
+}
+
+// firstNonEmptyLine returns the first non-empty whitespace-trimmed line of s,
+// or "" if there is none. url.txt should contain exactly one URL; this
+// tolerates trailing newlines / accidental whitespace.
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 // WeightsBytes returns the raw ONNX bytes for the requested backend's primary
