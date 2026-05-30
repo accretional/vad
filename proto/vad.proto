@@ -10,6 +10,16 @@ service VoiceSegmentation {
   // Detect processes raw audio and returns speaker-diarized segments.
   rpc Detect(Audio) returns (Diarization);
 
+  // DetectStream processes a live audio stream and emits segmentation events
+  // (speech activity transitions, completed segments) in real time. Intended
+  // for utterance endpointing in interactive voice apps — eliminates the
+  // client-side polling loop required when using Detect on rolling buffers.
+  //
+  // Client sends AudioChunks as they're captured; server accumulates a rolling
+  // buffer and emits SegmentationEvents as state changes. Client should set
+  // end_of_stream=true on its final chunk so the server can flush.
+  rpc DetectStream(stream AudioChunk) returns (stream SegmentationEvent);
+
   // Fetch returns the ONNX model weights, either as raw bytes or as a
   // redirect URL if the server is configured with a weight URL.
   rpc Fetch(FetchRequest) returns (FetchResponse);
@@ -46,6 +56,46 @@ message Segment {
 
   // Confidence score for this segment (0.0 - 1.0).
   float confidence = 4;
+}
+
+// AudioChunk is one piece of an ongoing audio stream sent to DetectStream.
+message AudioChunk {
+  // Raw PCM audio samples as 16 kHz mono float32 little-endian bytes.
+  bytes samples = 1;
+
+  // Sample rate in Hz. Must be 16000. Send on the first chunk; the server
+  // requires it to match across all chunks in a stream.
+  int32 sample_rate = 2;
+
+  // Hint that no more audio is coming. The server SHOULD flush any pending
+  // segments and emit a final SpeechActivity{speech_active=false} event before
+  // closing its half of the stream. Client should still half-close its send
+  // direction (CloseSend) after sending this chunk.
+  bool end_of_stream = 3;
+}
+
+// SegmentationEvent is one streamed event emitted by DetectStream.
+message SegmentationEvent {
+  // Timestamp in seconds from the start of the stream that this event refers
+  // to (e.g., the transition time for an activity event, or the end time of a
+  // completed segment).
+  double timestamp = 1;
+
+  oneof event {
+    // Speech activity transition — someone started or stopped speaking.
+    // Emitted hot, as soon as the rolling analysis detects a state change.
+    SpeechActivity activity = 2;
+
+    // A completed speech region. Emitted after the region has ended and the
+    // backend has finalized it; useful for downstream diarization or logging.
+    Segment segment = 3;
+  }
+}
+
+// SpeechActivity is a transition event in DetectStream.
+message SpeechActivity {
+  // True if speech started at `timestamp`; false if it stopped.
+  bool speech_active = 1;
 }
 
 // FetchRequest requests the ONNX model weights.
