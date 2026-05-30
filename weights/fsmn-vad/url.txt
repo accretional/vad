@@ -1,1 +1,1 @@
-https://github.com/accretional/vad/raw/refs/heads/main/weights/fsmn-vad/model.onnx
+https://raw.githubusercontent.com/accretional/vad/refs/heads/main/weights/fsmn-vad/model.onnx
