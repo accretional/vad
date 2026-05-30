@@ -6,7 +6,9 @@
 # for an explicit ACCEPT click.
 #
 # Pipeline:
-#   1. Sanity: clean tree, on a known branch.
+#   1. Sanity: regenerate gRPC clients (scripts/gen-proto.sh), then clean
+#      tree, on a known branch. Stale generated code fails the gate before
+#      anything builds.
 #   2. Tests (test.sh): go vet, unit tests, basic-vad-web integration,
 #      pkg-example pipeline, Docker build + tests/e2e + tests/fetch.
 #   3. Build artifacts:
@@ -133,8 +135,15 @@ if [ "$RELEASE" = 1 ] && [ -z "$TAG" ]; then
     die "--release requires --tag <vX.Y.Z>"
 fi
 
+# Regenerate Go gRPC client + server bindings BEFORE the clean-tree check.
+# If stale generated code is checked in, this surfaces it as a dirty-tree
+# failure rather than silently shipping yesterday's protocol.
+step "Generate gRPC clients (Go)"
+bash scripts/gen-proto.sh
+
 if ! git diff --quiet || ! git diff --cached --quiet; then
-    die "working tree is dirty (commit or stash first):
+    die "working tree is dirty (commit or stash first; could be stale
+generated client code — re-check after gen-proto ran):
 $(git status --short)"
 fi
 
