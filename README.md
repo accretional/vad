@@ -4,7 +4,7 @@ High-throughput gRPC + go + ONNX Voice Activity Detection with CPU model serving
 
 * **>200× realtime VAD throughput with CPU inference**
 * serves 5 SoTA VAD models via gRPC, container, go package, or self-contained binary file
-* High Throughput Go Voice AI inference stack, 4 ports PyTorth->ONNX, 1 port NeMo->ONNX
+* High Throughput Go Voice AI inference stack, 4 ports PyTortch->ONNX, 1 port NeMo->ONNX
 * Realtime in-browser VAD through transformers.js / onnxruntime-web, can act as an ONNX model discovery service and model host to webGPU applications
 * Websocket interface for realtime remote VAD computed on CPUs; single-binary server or prebuilt container you can use to launch instantly
 
