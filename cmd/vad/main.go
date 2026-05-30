@@ -201,7 +201,9 @@ func main() {
 		backend, err = vad.NewFSMN(cfg.WeightsDir)
 	case pb.VADModel_VAD_MODEL_FIRERED:
 		backend, err = vad.NewFireRed(cfg.WeightsDir)
-	case pb.VADModel_VAD_MODEL_MARBLENET, pb.VADModel_VAD_MODEL_SILERO:
+	case pb.VADModel_VAD_MODEL_SILERO:
+		backend, err = vad.NewSilero(cfg.WeightsDir)
+	case pb.VADModel_VAD_MODEL_MARBLENET:
 		log.Fatalf("backend %s not yet implemented (see TODO.md)", cfg.Model.String())
 	default:
 		log.Fatalf("unknown VADModel %v", cfg.Model)
