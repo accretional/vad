@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
-	"os"
 
 	"github.com/accretional/vad/pkg/vad"
 	pb "github.com/accretional/vad/proto/vadpb"
@@ -13,19 +12,45 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// FetchBytesFunc returns the raw ONNX weight bytes for the given model.
+// Supplied at construction; typically backed by internal/embedded.WeightsBytes
+// which checks embedded files first and falls back to on-disk weights/.
+type FetchBytesFunc func(model pb.VADModel) ([]byte, error)
+
 // Server implements the VoiceSegmentation gRPC service.
+//
+// Holds exactly one inference backend (loaded at startup from VADConfig.model).
+// Per-request backend selection for Detect/DetectStream is a future change;
+// today the Fetch RPC is the only one that accepts a per-request model
+// parameter (so clients can pull weights for any embedded/disk backend
+// without restarting the server with a different config).
 type Server struct {
 	pb.UnimplementedVoiceSegmentationServer
-	model      vad.Backend
-	weightsURL string
-	modelPath  string
+	backend      vad.Backend
+	defaultModel pb.VADModel
+	fetchBytes   FetchBytesFunc
+	weightsURL   string
 }
 
-// New creates a new Server with the given VAD backend.
-// weightsURL is optional — if set, Fetch returns it instead of the raw weights.
-// modelPath is needed to read weights from disk when weightsURL is empty.
-func New(model vad.Backend, modelPath string, weightsURL string) *Server {
-	return &Server{model: model, modelPath: modelPath, weightsURL: weightsURL}
+// New creates a new Server.
+//
+//   - backend: the loaded inference backend (used for Detect / DetectStream).
+//   - defaultModel: the enum value matching `backend`; used by Fetch when the
+//     client doesn't specify a model.
+//   - fetchBytes: closure that returns raw ONNX bytes for ANY backend; called
+//     by Fetch when the client wants weights without proxying through the
+//     server's CDN-style URL.
+//   - weightsURL: optional. If set AND the Fetch request targets defaultModel,
+//     the server redirects clients to this URL instead of streaming bytes.
+//     Useful for browser clients (e.g. transformers.js) that prefer a CDN
+//     download.
+func New(backend vad.Backend, defaultModel pb.VADModel, fetchBytes FetchBytesFunc, weightsURL string) *Server {
+	return &Server{
+		backend:      backend,
+		defaultModel: defaultModel,
+		fetchBytes:   fetchBytes,
+		weightsURL:   weightsURL,
+	}
 }
 
 // Detect processes raw audio and returns speaker-diarized segments.
@@ -47,7 +72,7 @@ func (s *Server) Detect(ctx context.Context, req *pb.Audio) (*pb.Diarization, er
 	samples := bytesToFloat32(req.Samples)
 	duration := float64(len(samples)) / float64(vad.SampleRate)
 
-	segments, err := s.model.ProcessAudio(samples)
+	segments, err := s.backend.ProcessAudio(samples)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "inference failed: %v", err)
 	}
@@ -107,7 +132,7 @@ func (s *Server) DetectStream(stream pb.VoiceSegmentation_DetectStreamServer) er
 		if len(buf) == 0 {
 			return nil
 		}
-		segments, err := s.model.ProcessAudio(buf)
+		segments, err := s.backend.ProcessAudio(buf)
 		if err != nil {
 			return status.Errorf(codes.Internal, "inference failed: %v", err)
 		}
@@ -222,18 +247,31 @@ func (s *Server) DetectStream(stream pb.VoiceSegmentation_DetectStreamServer) er
 }
 
 // Fetch returns the ONNX model weights or a URL to download them.
+//
+// Request semantics:
+//   - `model` unset / VAD_MODEL_UNSPECIFIED: use the server's defaultModel.
+//   - `model` specified: return weights for that backend (works for any
+//     backend whose weights are embedded or on disk, not just the one
+//     currently loaded for Detect).
+//   - `weightsURL` is honoured only when the requested model matches
+//     defaultModel (the URL was registered for that specific model).
 func (s *Server) Fetch(ctx context.Context, req *pb.FetchRequest) (*pb.FetchResponse, error) {
-	if s.weightsURL != "" {
+	model := req.GetModel()
+	if model == pb.VADModel_VAD_MODEL_UNSPECIFIED {
+		model = s.defaultModel
+	}
+	if model == s.defaultModel && s.weightsURL != "" {
 		return &pb.FetchResponse{
 			Result: &pb.FetchResponse_Url{Url: s.weightsURL},
 		}, nil
 	}
-
-	data, err := os.ReadFile(s.modelPath)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to read model weights: %v", err)
+	if s.fetchBytes == nil {
+		return nil, status.Error(codes.Unimplemented, "server has no weights fetcher configured")
 	}
-
+	data, err := s.fetchBytes(model)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "weights for %s: %v", model.String(), err)
+	}
 	return &pb.FetchResponse{
 		Result: &pb.FetchResponse_Weights{Weights: data},
 	}, nil

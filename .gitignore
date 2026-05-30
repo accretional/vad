@@ -10,6 +10,13 @@ weights/*
 !weights/firered-vad/
 !weights/marblenet/
 !weights/silero/
+!weights/pyannote/
+
+# build.sh materializes third_party/libonnxruntime.{dylib,so} and weights/*
+# into internal/embedded/{ort,weights}/ so go:embed can find them. These are
+# build artifacts; the canonical source is third_party/ and weights/.
+internal/embedded/ort/
+internal/embedded/weights/
 /vad
 third_party/
 *.f32

@@ -142,8 +142,14 @@ message VADConfig {
   string weights_url = 5;
 }
 
-// FetchRequest requests the ONNX model weights.
-message FetchRequest {}
+// FetchRequest requests the ONNX model weights for a specific backend.
+message FetchRequest {
+  // Which backend's weights to return. Unset / VAD_MODEL_UNSPECIFIED uses the
+  // server's currently-loaded inference model (typically the one from the
+  // server's startup VADConfig). Setting this lets clients pull weights for
+  // alternate backends without restarting the server with a different config.
+  VADModel model = 1;
+}
 
 // FetchResponse returns model weights either directly or as a URL.
 message FetchResponse {

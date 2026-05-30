@@ -15,96 +15,37 @@ import (
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/protobuf/encoding/prototext"
 
+	"github.com/accretional/vad/internal/embedded"
 	"github.com/accretional/vad/internal/server"
 	"github.com/accretional/vad/pkg/vad"
 	pb "github.com/accretional/vad/proto/vadpb"
 )
 
-// discoverOnnxRuntime looks for libonnxruntime.{dylib,so} in conventional
-// locations so users don't have to pass -lib or set ONNXRUNTIME_LIB explicitly.
-// Returns "" if nothing is found.
-func discoverOnnxRuntime() string {
-	var libName string
-	switch runtime.GOOS {
-	case "darwin":
-		libName = "libonnxruntime.dylib"
-	case "linux":
-		libName = "libonnxruntime.so"
-	default:
-		return ""
-	}
-	candidates := []string{}
-	// 1. Bundled under third_party/ relative to the executable (matches what
-	//    setup.sh installs).
-	if exe, err := os.Executable(); err == nil {
-		for _, base := range []string{filepath.Dir(exe), filepath.Dir(filepath.Dir(exe))} {
-			matches, _ := filepath.Glob(filepath.Join(base, "third_party", "onnxruntime-*", "lib", libName))
-			candidates = append(candidates, matches...)
-		}
-	}
-	// 2. Also try ./third_party from cwd (covers running from repo root).
-	if matches, _ := filepath.Glob(filepath.Join("third_party", "onnxruntime-*", "lib", libName)); len(matches) > 0 {
-		candidates = append(candidates, matches...)
-	}
-	// 3. System install locations.
-	candidates = append(candidates,
-		"/usr/local/lib/"+libName,
-		"/opt/homebrew/lib/"+libName,
-		"/usr/lib/"+libName,
-		"/usr/lib/x86_64-linux-gnu/"+libName,
-		"/usr/lib/aarch64-linux-gnu/"+libName,
-	)
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c
-		}
-	}
-	return ""
-}
+// onDiskWeightsRoot is the conventional directory the server checks for
+// per-backend on-disk weights (used as a fallback when something isn't
+// embedded; e.g. a model added after this binary was built).
+const onDiskWeightsRoot = "weights"
 
-// resolveModelPath picks the on-disk file to serve via the Fetch RPC. For
-// pyannote, weights_dir is itself the .onnx file. For multi-file backends,
-// the canonical entrypoint is `<weights_dir>/model.onnx`. Returns "" if the
-// path doesn't resolve to an existing file (Fetch will then return an error).
-func resolveModelPath(weightsDir string) string {
-	if weightsDir == "" {
-		return ""
-	}
-	st, err := os.Stat(weightsDir)
-	if err != nil {
-		return ""
-	}
-	if !st.IsDir() {
-		return weightsDir
-	}
-	candidate := filepath.Join(weightsDir, "model.onnx")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
-	}
-	return ""
-}
-
-// defaultWeightsDir returns the on-disk path the server reaches for if
-// VADConfig.weights_dir is unset.
-func defaultWeightsDir(m pb.VADModel) string {
+// backendDirName maps a VADModel enum to the directory name under weights/
+// that holds its model.onnx (and any auxiliary files). Used by both the
+// startup loader and the Fetch RPC's per-model lookup.
+func backendDirName(m pb.VADModel) (string, bool) {
 	switch m {
 	case pb.VADModel_VAD_MODEL_PYANNOTE:
-		return "weights/model.onnx"
+		return "pyannote", true
 	case pb.VADModel_VAD_MODEL_FSMN:
-		return "weights/fsmn-vad"
+		return "fsmn-vad", true
 	case pb.VADModel_VAD_MODEL_FIRERED:
-		return "weights/firered-vad"
+		return "firered-vad", true
 	case pb.VADModel_VAD_MODEL_MARBLENET:
-		return "weights/marblenet"
+		return "marblenet", true
 	case pb.VADModel_VAD_MODEL_SILERO:
-		return "weights/silero"
+		return "silero", true
 	}
-	return ""
+	return "", false
 }
 
 // legacyBackendName converts the deprecated -backend string into a VADModel.
-// Returns VAD_MODEL_UNSPECIFIED for unknown / empty values (so the caller
-// can preserve config-file or default behaviour).
 func legacyBackendName(s string) pb.VADModel {
 	switch s {
 	case "":
@@ -123,6 +64,48 @@ func legacyBackendName(s string) pb.VADModel {
 	return pb.VADModel_VAD_MODEL_UNSPECIFIED
 }
 
+// discoverOnnxRuntime looks for libonnxruntime.{dylib,so} in conventional
+// locations and returns the first match, or "" if none found.
+//
+// **Diagnostic only.** The server always loads the embedded dylib (see
+// internal/embedded.MaterializeDylib); this function is used at startup to
+// log whether a system install also exists, and to warn if the local copy
+// looks like it could conflict (different size suggests different version).
+func discoverOnnxRuntime() string {
+	var libName string
+	switch runtime.GOOS {
+	case "darwin":
+		libName = "libonnxruntime.dylib"
+	case "linux":
+		libName = "libonnxruntime.so"
+	default:
+		return ""
+	}
+	candidates := []string{}
+	if exe, err := os.Executable(); err == nil {
+		for _, base := range []string{filepath.Dir(exe), filepath.Dir(filepath.Dir(exe))} {
+			matches, _ := filepath.Glob(filepath.Join(base, "third_party", "onnxruntime-*", "lib", libName))
+			candidates = append(candidates, matches...)
+		}
+	}
+	if matches, _ := filepath.Glob(filepath.Join("third_party", "onnxruntime-*", "lib", libName)); len(matches) > 0 {
+		candidates = append(candidates, matches...)
+	}
+	candidates = append(candidates,
+		"/usr/local/lib/"+libName,
+		"/opt/homebrew/lib/"+libName,
+		"/usr/lib/"+libName,
+		"/usr/lib/x86_64-linux-gnu/"+libName,
+		"/usr/lib/aarch64-linux-gnu/"+libName,
+	)
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
+}
+
 func main() {
 	configPath := flag.String("config", "",
 		"path to a VADConfig textproto file (see proto/vad.proto for the schema)")
@@ -130,10 +113,13 @@ func main() {
 		"DEPRECATED: legacy backend selector (pyannote | fsmn | firered | marblenet | silero). Prefer -config.")
 	port := flag.Int("port", 0, "gRPC port (overrides config; default 50051)")
 	modelPath := flag.String("model", "",
-		"weights dir or ONNX path (overrides config; default per-model under weights/)")
-	libPath := flag.String("lib", "", "ONNX Runtime shared library path (overrides ONNXRUNTIME_LIB env)")
+		"weights dir for the inference backend (overrides config; defaults to weights/<backend>/)")
+	libPath := flag.String("lib", "",
+		"override the embedded ONNX Runtime with an external libonnxruntime.{dylib,so}. "+
+			"Rare — the binary ships with the right dylib for its build target. "+
+			"Falls back to ONNXRUNTIME_LIB env var.")
 	weightsURL := flag.String("weights-url", "",
-		"URL returned by Fetch RPC; pyannote-only (overrides config)")
+		"URL the Fetch RPC redirects clients to (when they request the configured default model)")
 	flag.Parse()
 
 	cfg := &pb.VADConfig{}
@@ -146,8 +132,6 @@ func main() {
 			log.Fatalf("parse config %s: %v", *configPath, err)
 		}
 	}
-
-	// CLI flags override individual config fields.
 	if v := legacyBackendName(*backendStr); v != pb.VADModel_VAD_MODEL_UNSPECIFIED {
 		cfg.Model = v
 	}
@@ -163,32 +147,84 @@ func main() {
 	if *weightsURL != "" {
 		cfg.WeightsUrl = *weightsURL
 	}
-
-	// Apply defaults.
 	if cfg.Model == pb.VADModel_VAD_MODEL_UNSPECIFIED {
 		cfg.Model = pb.VADModel_VAD_MODEL_PYANNOTE
 	}
 	if cfg.Port == 0 {
 		cfg.Port = 50051
 	}
-	if cfg.OnnxruntimeLib == "" {
-		cfg.OnnxruntimeLib = os.Getenv("ONNXRUNTIME_LIB")
+
+	// Resolve the ONNX Runtime dylib path. Priority:
+	//   1. explicit override (CLI -lib, config field, or env) — for advanced
+	//      users pinning a specific version
+	//   2. embedded dylib materialized to a temp file (default for prod)
+	//   3. discovered system install (back-compat only, deprecated)
+	var ortPath, ortTempPath string
+	ortExplicit := cfg.OnnxruntimeLib
+	if ortExplicit == "" {
+		ortExplicit = os.Getenv("ONNXRUNTIME_LIB")
 	}
-	if cfg.OnnxruntimeLib == "" {
-		cfg.OnnxruntimeLib = discoverOnnxRuntime()
+	switch {
+	case ortExplicit != "":
+		ortPath = ortExplicit
+		log.Printf("ORT: using explicit override %s", ortPath)
+	case embedded.HasEmbeddedDylib():
+		var err error
+		ortTempPath, err = embedded.MaterializeDylib()
+		if err != nil {
+			log.Fatalf("ORT: failed to materialize embedded dylib: %v", err)
+		}
+		ortPath = ortTempPath
+		log.Printf("ORT: using embedded dylib for %s (%d bytes) → %s",
+			embedded.PlatformLabel(), embedded.OrtBytes(), ortPath)
+	default:
+		discovered := discoverOnnxRuntime()
+		if discovered == "" {
+			log.Fatal("Could not find libonnxruntime.{dylib,so}: no embedded dylib for this " +
+				"build target (build with the right GOOS/GOARCH or supply -lib).")
+		}
+		ortPath = discovered
+		log.Printf("ORT: no embedded dylib for %s/%s; using discovered system install %s",
+			runtime.GOOS, runtime.GOARCH, discovered)
 	}
-	if cfg.OnnxruntimeLib == "" {
-		log.Fatal("Could not find libonnxruntime.{dylib,so}. Pass -lib, set ONNXRUNTIME_LIB, " +
-			"set onnxruntime_lib in -config, or run setup.sh to install it under third_party/.")
+	// Diagnostic: if both embedded AND a system install exist, warn on size
+	// mismatch (likely different ORT versions, which can produce subtle bugs).
+	if embedded.HasEmbeddedDylib() {
+		if disc := discoverOnnxRuntime(); disc != "" {
+			if info, err := os.Stat(disc); err == nil && info.Size() != int64(embedded.OrtBytes()) {
+				log.Printf("WARN: embedded dylib is %d bytes; discovered local %s is %d bytes "+
+					"(likely different ORT versions — using embedded)",
+					embedded.OrtBytes(), disc, info.Size())
+			}
+		}
 	}
-	if cfg.WeightsDir == "" {
-		cfg.WeightsDir = defaultWeightsDir(cfg.Model)
+	if ortTempPath != "" {
+		defer os.Remove(ortTempPath)
 	}
 
-	if err := vad.InitONNXRuntime(cfg.OnnxruntimeLib); err != nil {
+	if err := vad.InitONNXRuntime(ortPath); err != nil {
 		log.Fatalf("Failed to initialize ONNX Runtime: %v", err)
 	}
 	defer vad.DestroyONNXRuntime()
+
+	// Resolve the backend's weights. Embedded-first; on-disk weights/<backend>
+	// is the override path for backends added after the binary was built.
+	backendName, ok := backendDirName(cfg.Model)
+	if !ok {
+		log.Fatalf("unknown VADModel %v", cfg.Model)
+	}
+	weightsDir := cfg.WeightsDir
+	var weightsTempDir string
+	if weightsDir == "" {
+		var err error
+		weightsDir, weightsTempDir, err = embedded.ResolveWeights(onDiskWeightsRoot, backendName)
+		if err != nil {
+			log.Fatalf("resolve weights for %s: %v", backendName, err)
+		}
+	}
+	if weightsTempDir != "" {
+		defer os.RemoveAll(weightsTempDir)
+	}
 
 	var (
 		backend vad.Backend
@@ -196,13 +232,13 @@ func main() {
 	)
 	switch cfg.Model {
 	case pb.VADModel_VAD_MODEL_PYANNOTE:
-		backend, err = vad.NewModel(cfg.WeightsDir)
+		backend, err = vad.NewModel(weightsDir)
 	case pb.VADModel_VAD_MODEL_FSMN:
-		backend, err = vad.NewFSMN(cfg.WeightsDir)
+		backend, err = vad.NewFSMN(weightsDir)
 	case pb.VADModel_VAD_MODEL_FIRERED:
-		backend, err = vad.NewFireRed(cfg.WeightsDir)
+		backend, err = vad.NewFireRed(weightsDir)
 	case pb.VADModel_VAD_MODEL_SILERO:
-		backend, err = vad.NewSilero(cfg.WeightsDir)
+		backend, err = vad.NewSilero(weightsDir)
 	case pb.VADModel_VAD_MODEL_MARBLENET:
 		log.Fatalf("backend %s not yet implemented (see TODO.md)", cfg.Model.String())
 	default:
@@ -213,10 +249,15 @@ func main() {
 	}
 	defer backend.Close()
 
-	// Fetch RPC: serve whatever ONNX file backs the loaded model. Generalized
-	// from the original pyannote-only behaviour — any backend can have its
-	// weights pulled by clients (e.g. transformers.js).
-	modelFile := resolveModelPath(cfg.WeightsDir)
+	// Fetch RPC weights fetcher: any backend whose weights are embedded or on
+	// disk can be served, regardless of which backend is loaded for inference.
+	fetchBytes := func(m pb.VADModel) ([]byte, error) {
+		name, ok := backendDirName(m)
+		if !ok {
+			return nil, fmt.Errorf("unknown model %v", m)
+		}
+		return embedded.WeightsBytes(onDiskWeightsRoot, name)
+	}
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {
@@ -227,7 +268,8 @@ func main() {
 		grpc.MaxSendMsgSize(32*1024*1024),
 		grpc.MaxRecvMsgSize(32*1024*1024),
 	)
-	pb.RegisterVoiceSegmentationServer(grpcServer, server.New(backend, modelFile, cfg.WeightsUrl))
+	pb.RegisterVoiceSegmentationServer(grpcServer,
+		server.New(backend, cfg.Model, fetchBytes, cfg.WeightsUrl))
 	reflection.Register(grpcServer)
 
 	go func() {
@@ -239,7 +281,7 @@ func main() {
 	}()
 
 	log.Printf("VAD gRPC server listening on :%d  (model=%s, weights=%s)",
-		cfg.Port, cfg.Model.String(), filepath.Clean(cfg.WeightsDir))
+		cfg.Port, cfg.Model.String(), filepath.Clean(weightsDir))
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}

@@ -20,16 +20,25 @@ fi
 
 echo "Docker daemon is running."
 
-# Download ONNX weights
+# Download ONNX weights for pyannote. The binary ships with these embedded via
+# go:embed (see internal/embedded/), so this step is only required for users
+# who want to override / update without rebuilding. Same goes for the alternate
+# backends — fsmn-vad, firered-vad, marblenet, silero — whose weights are
+# committed under weights/<backend>/ and bundled at build time.
 WEIGHTS_DIR="weights"
-MODEL_FILE="${WEIGHTS_DIR}/model.onnx"
+MODEL_FILE="${WEIGHTS_DIR}/pyannote/model.onnx"
+LEGACY_FILE="${WEIGHTS_DIR}/model.onnx"  # pre-2026-05 layout
 MODEL_URL="https://huggingface.co/onnx-community/pyannote-segmentation-3.0/resolve/main/onnx/model.onnx"
 
 if [ -f "$MODEL_FILE" ]; then
-    echo "Weights already downloaded: $MODEL_FILE"
+    echo "Pyannote weights already at $MODEL_FILE"
+elif [ -f "$LEGACY_FILE" ]; then
+    echo "Migrating pyannote weights: $LEGACY_FILE → $MODEL_FILE"
+    mkdir -p "$(dirname "$MODEL_FILE")"
+    mv "$LEGACY_FILE" "$MODEL_FILE"
 else
-    echo "Downloading ONNX weights..."
-    mkdir -p "$WEIGHTS_DIR"
+    echo "Downloading pyannote ONNX weights (~5.7 MB)..."
+    mkdir -p "$(dirname "$MODEL_FILE")"
     curl -L -o "$MODEL_FILE" "$MODEL_URL"
     echo "Downloaded weights to $MODEL_FILE"
 fi
@@ -151,10 +160,13 @@ for backend in fsmn-vad firered-vad; do
 done
 
 echo ""
-echo "Setup complete. You can now build with:"
-echo "  ./build.sh"
+echo "Setup complete. Build either way:"
+echo "  ./build-native.sh        # local Go build; produces ./bin/vad (~59 MB self-contained)"
+echo "  ./build.sh               # Docker image"
 echo ""
-echo "Available VAD backends (selected at server startup):"
-echo "  ./bin/vad -backend pyannote               # default; full diarization + speaker IDs"
-echo "  ./bin/vad -backend fsmn                   # tiny FSMN-VAD (1.6 MB); fastest, VAD-only"
-echo "  ./bin/vad -backend firered                # FireRed DFSMN-VAD (2.3 MB); VAD-only"
+echo "Available VAD backends (-backend or VADConfig.model in -config):"
+echo "  pyannote   default; full diarization + speaker IDs (~6 MB)"
+echo "  fsmn       tiny FunASR FSMN-VAD (~1.6 MB); VAD-only"
+echo "  firered    FireRed DFSMN-VAD (~2.5 MB); VAD-only"
+echo "  silero     Silero VAD (~1.3 MB); VAD-only"
+echo "  marblenet  NVIDIA MarbleNet (TODO: Go impl pending; weights/bench in place)"

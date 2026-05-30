@@ -3,6 +3,8 @@ package vad
 import (
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"sync"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -49,11 +51,15 @@ type Model struct {
 	output  *ort.Tensor[float32]
 }
 
-// NewModel creates a new Pyannote VAD model from an ONNX file.
-//
-// Equivalent to NewPyannote — kept under the original name so older callers
-// keep compiling without modification.
-func NewModel(modelPath string) (*Model, error) {
+// NewModel creates a new Pyannote VAD model from a weights directory or a
+// direct path to the .onnx file. Accepts either to match how the other
+// backends are constructed (directory containing model.onnx) while still
+// supporting the legacy single-file layout (weights/model.onnx).
+func NewModel(weightsDirOrFile string) (*Model, error) {
+	modelPath, err := resolvePyannoteModelPath(weightsDirOrFile)
+	if err != nil {
+		return nil, err
+	}
 	inputShape := ort.NewShape(1, 1, int64(WindowSize))
 	outputShape := ort.NewShape(1, int64(pyannoteNumFrames), int64(pyannoteNumClasses))
 
@@ -82,9 +88,25 @@ func NewModel(modelPath string) (*Model, error) {
 	return &Model{session: session, input: input, output: output}, nil
 }
 
-// NewPyannote is an alias for NewModel for clarity at the call site once
-// multiple backends exist.
-func NewPyannote(modelPath string) (*Model, error) { return NewModel(modelPath) }
+// NewPyannote is an alias for NewModel.
+func NewPyannote(weightsDirOrFile string) (*Model, error) { return NewModel(weightsDirOrFile) }
+
+// resolvePyannoteModelPath supports both layouts: pass either a directory
+// containing model.onnx, or the .onnx file itself.
+func resolvePyannoteModelPath(p string) (string, error) {
+	st, err := os.Stat(p)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", p, err)
+	}
+	if !st.IsDir() {
+		return p, nil
+	}
+	candidate := filepath.Join(p, "model.onnx")
+	if _, err := os.Stat(candidate); err != nil {
+		return "", fmt.Errorf("model.onnx not found under %s", p)
+	}
+	return candidate, nil
+}
 
 // Close releases all resources.
 func (m *Model) Close() {

@@ -573,9 +573,14 @@ func (x *VADConfig) GetWeightsUrl() string {
 	return ""
 }
 
-// FetchRequest requests the ONNX model weights.
+// FetchRequest requests the ONNX model weights for a specific backend.
 type FetchRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Which backend's weights to return. Unset / VAD_MODEL_UNSPECIFIED uses the
+	// server's currently-loaded inference model (typically the one from the
+	// server's startup VADConfig). Setting this lets clients pull weights for
+	// alternate backends without restarting the server with a different config.
+	Model         VADModel `protobuf:"varint,1,opt,name=model,proto3,enum=vad.VADModel" json:"model,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -608,6 +613,13 @@ func (x *FetchRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use FetchRequest.ProtoReflect.Descriptor instead.
 func (*FetchRequest) Descriptor() ([]byte, []int) {
 	return file_vad_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *FetchRequest) GetModel() VADModel {
+	if x != nil {
+		return x.Model
+	}
+	return VADModel_VAD_MODEL_UNSPECIFIED
 }
 
 // FetchResponse returns model weights either directly or as a URL.
@@ -735,8 +747,9 @@ const file_vad_proto_rawDesc = "" +
 	"\x04port\x18\x03 \x01(\x05R\x04port\x12'\n" +
 	"\x0fonnxruntime_lib\x18\x04 \x01(\tR\x0eonnxruntimeLib\x12\x1f\n" +
 	"\vweights_url\x18\x05 \x01(\tR\n" +
-	"weightsUrl\"\x0e\n" +
-	"\fFetchRequest\"I\n" +
+	"weightsUrl\"3\n" +
+	"\fFetchRequest\x12#\n" +
+	"\x05model\x18\x01 \x01(\x0e2\r.vad.VADModelR\x05model\"I\n" +
 	"\rFetchResponse\x12\x1a\n" +
 	"\aweights\x18\x01 \x01(\fH\x00R\aweights\x12\x12\n" +
 	"\x03url\x18\x02 \x01(\tH\x00R\x03urlB\b\n" +
@@ -785,17 +798,18 @@ var file_vad_proto_depIdxs = []int32{
 	6, // 1: vad.SegmentationEvent.activity:type_name -> vad.SpeechActivity
 	3, // 2: vad.SegmentationEvent.segment:type_name -> vad.Segment
 	0, // 3: vad.VADConfig.model:type_name -> vad.VADModel
-	1, // 4: vad.VoiceSegmentation.Detect:input_type -> vad.Audio
-	4, // 5: vad.VoiceSegmentation.DetectStream:input_type -> vad.AudioChunk
-	8, // 6: vad.VoiceSegmentation.Fetch:input_type -> vad.FetchRequest
-	2, // 7: vad.VoiceSegmentation.Detect:output_type -> vad.Diarization
-	5, // 8: vad.VoiceSegmentation.DetectStream:output_type -> vad.SegmentationEvent
-	9, // 9: vad.VoiceSegmentation.Fetch:output_type -> vad.FetchResponse
-	7, // [7:10] is the sub-list for method output_type
-	4, // [4:7] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	0, // 4: vad.FetchRequest.model:type_name -> vad.VADModel
+	1, // 5: vad.VoiceSegmentation.Detect:input_type -> vad.Audio
+	4, // 6: vad.VoiceSegmentation.DetectStream:input_type -> vad.AudioChunk
+	8, // 7: vad.VoiceSegmentation.Fetch:input_type -> vad.FetchRequest
+	2, // 8: vad.VoiceSegmentation.Detect:output_type -> vad.Diarization
+	5, // 9: vad.VoiceSegmentation.DetectStream:output_type -> vad.SegmentationEvent
+	9, // 10: vad.VoiceSegmentation.Fetch:output_type -> vad.FetchResponse
+	8, // [8:11] is the sub-list for method output_type
+	5, // [5:8] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_vad_proto_init() }
