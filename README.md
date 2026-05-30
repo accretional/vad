@@ -1,4 +1,42 @@
 # vad
+
+gRPC voice-activity-detection service with pluggable backends. All backends speak the same `vad.VoiceSegmentation` proto (`Detect` unary + `DetectStream` bidi streaming) so clients are backend-agnostic.
+
+## Backends
+
+| `-backend` | Model | Source | Size | RTF on M4 (Detect / 10s) | Speaker IDs | Notes |
+|---|---|---|---|---|---|---|
+| `pyannote` (default) | Pyannote Segmentation 3.0 | `onnx-community/pyannote-segmentation-3.0` (downloaded by setup.sh) | ~6 MB | ~50 ms | yes (up to 3) | Full diarization. |
+| `fsmn` | FunASR FSMN-VAD | `funasr/fsmn-vad` (PyTorch → ONNX, exported via speax/benchmarks/vad/export_fsmn_vad_to_onnx.py) | 1.6 MB | ~22 ms | no | Smallest. Chinese-trained but works on English; verify accuracy on your audio first. |
+| `firered` | FireRedTeam DFSMN-VAD | `FireRedTeam/FireRedVAD` (VAD variant; PyTorch → ONNX) | 2.3 MB | ~16 ms | no | Closest in segment quality to pyannote on the bundled sample clips. |
+
+Pure-Go log-Mel-fbank lives in `fbank/` (parity-tested against `kaldi_native_fbank`, ~21 ms/10 s — see `fbank/README.md`). Both new backends compute their input features through it; no CGO beyond the existing ONNX Runtime binding.
+
+## Quickstart
+
+```bash
+bash setup.sh           # checks deps, fetches pyannote weights, prepares ONNX Runtime
+bash build.sh           # builds bin/vad
+
+# Default backend (pyannote):
+ONNXRUNTIME_LIB=third_party/onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.dylib \
+  ./bin/vad -port 50051
+
+# Switch backend at startup:
+./bin/vad -backend fsmn
+./bin/vad -backend firered
+```
+
+Bundled with the repo:
+- `fbank/` — Kaldi-compatible log-Mel features (pure Go).
+- `pkg/vad/` — `Backend` interface + Pyannote, FSMN, FireRed impls.
+- `tests/stream/` — Python validation client for the `DetectStream` bidi RPC.
+- `weights/fsmn-vad/` + `weights/firered-vad/` — small pre-validated ONNX weights for the alternative backends.
+
+---
+
+## Original notes
+
 Pyannote Segmentation 3.0 via ONNX and accretional/openvino-go as a remote grpc service (and weight server for transformers.js)
 
 ## Development Rules

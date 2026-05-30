@@ -1,13 +1,13 @@
 .DS_Store
-weights/
-# But DO commit the small weights for the alternate ONNX backends. Pyannote's
+# `weights/*` (not `weights/`) so the exceptions below can match files inside.
+# Git won't recurse into a fully-ignored directory.
+weights/*
+# DO commit the small weights for the alternate ONNX backends. Pyannote's
 # model.onnx (5.7 MB) is still downloaded by setup.sh; fsmn-vad + firered-vad
 # total ~4 MB and are bundled so `bin/vad -backend fsmn|firered` works out of
 # the box. Regen via speax/benchmarks/vad/export_*_to_onnx.py if needed.
 !weights/fsmn-vad/
-!weights/fsmn-vad/**
 !weights/firered-vad/
-!weights/firered-vad/**
 /vad
 third_party/
 *.f32
