@@ -22,14 +22,12 @@ import (
 	"strings"
 )
 
-// Weights is the embedded weights tree. Files mirror the on-disk weights/
-// layout under the repo root: weights/<backend>/model.onnx, etc.
-//
-// `all:` prefix opts in to embedding files whose names begin with `.` or `_`,
-// which we don't really need but is harmless and future-proof.
-//
-//go:embed all:weights
-var Weights embed.FS
+// Weights is declared in weights_fat.go (default: embeds everything) or
+// weights_slim.go (build with `-tags slim`: only the default backend).
+// See those files for what's actually embedded. The `embed` import is kept
+// here so dependent code keeps compiling even when both variant files
+// would somehow be excluded by tooling.
+var _ = embed.FS{}
 
 // HasEmbeddedDylib reports whether OrtLib is populated for this build target.
 // Defined in the per-platform files (ort_darwin_arm64.go etc.); the fallback
@@ -37,15 +35,24 @@ var Weights embed.FS
 func HasEmbeddedDylib() bool { return len(OrtLib) > 0 }
 
 // MaterializeDylib writes the embedded ORT shared library bytes to a unique
-// temp file and returns the path, suitable for InitONNXRuntime. Caller is
+// file and returns the path, suitable for InitONNXRuntime. Caller is
 // responsible for removing the file when done (typically at process exit).
 //
+// `rootDir` is the parent directory for the materialized file ("" means
+// os.CreateTemp's default — /tmp on Unix). Slim container builds pass
+// "/onnx" so the dylib lands at a stable, mountable location.
+//
 // Returns an error if the build target has no embedded dylib.
-func MaterializeDylib() (string, error) {
+func MaterializeDylib(rootDir string) (string, error) {
 	if !HasEmbeddedDylib() {
 		return "", fmt.Errorf("no embedded ORT dylib for this build target")
 	}
-	tmp, err := os.CreateTemp("", "libonnxruntime-*"+ortLibExt())
+	if rootDir != "" {
+		if err := os.MkdirAll(rootDir, 0o755); err != nil {
+			return "", fmt.Errorf("ensure dylib root %q: %w", rootDir, err)
+		}
+	}
+	tmp, err := os.CreateTemp(rootDir, "libonnxruntime-*"+ortLibExt())
 	if err != nil {
 		return "", fmt.Errorf("create temp dylib: %w", err)
 	}
@@ -74,17 +81,28 @@ func MaterializeDylib() (string, error) {
 //     binary release lags).
 //
 // `onDiskRoot` is the conventional weights/ directory (e.g. "weights" when
-// running from the repo root). Pass "" to skip the disk fallback entirely.
+// running from the repo root, or "/onnx/weights" in slim container builds).
+// Pass "" to skip the disk fallback entirely.
+//
+// `materializeRoot` is the parent directory for the temp dir holding the
+// extracted embedded files ("" means os.MkdirTemp's default — /tmp on Unix).
+// Slim container builds pass "/onnx" so materialized files land at a stable,
+// mountable location alongside the on-disk weights tree.
 //
 // `tempDir` is non-empty only when materialization happened; caller should
 // `os.RemoveAll(tempDir)` at shutdown.
-func ResolveWeights(onDiskRoot, backend string) (dir, tempDir string, err error) {
+func ResolveWeights(onDiskRoot, backend, materializeRoot string) (dir, tempDir string, err error) {
 	if backend == "" {
 		return "", "", errors.New("backend cannot be empty")
 	}
 	embedRoot := "weights/" + backend
 	if _, statErr := fs.Stat(Weights, embedRoot+"/model.onnx"); statErr == nil {
-		tmpDir, mkErr := os.MkdirTemp("", "vad-weights-"+backend+"-*")
+		if materializeRoot != "" {
+			if err := os.MkdirAll(materializeRoot, 0o755); err != nil {
+				return "", "", fmt.Errorf("ensure materialize root %q: %w", materializeRoot, err)
+			}
+		}
+		tmpDir, mkErr := os.MkdirTemp(materializeRoot, "vad-weights-"+backend+"-*")
 		if mkErr != nil {
 			return "", "", fmt.Errorf("mkdir temp: %w", mkErr)
 		}

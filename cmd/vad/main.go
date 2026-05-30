@@ -21,10 +21,10 @@ import (
 	pb "github.com/accretional/vad/proto/vadpb"
 )
 
-// onDiskWeightsRoot is the conventional directory the server checks for
-// per-backend on-disk weights (used as a fallback when something isn't
-// embedded; e.g. a model added after this binary was built).
-const onDiskWeightsRoot = "weights"
+// onDiskWeightsRoot and embedMaterializeRoot are declared in disk_fat.go
+// (default: ./weights / system tmp dir) or disk_slim.go (build with
+// `-tags slim`: /onnx/weights and /onnx). Split so the same code can build
+// for both the standalone-binary and the slim-container deployment shapes.
 
 // backendDirName maps a VADModel enum to the directory name under weights/
 // that holds its model.onnx (and any auxiliary files). Used by both the
@@ -170,7 +170,7 @@ func main() {
 		log.Printf("ORT: using explicit override %s", ortPath)
 	case embedded.HasEmbeddedDylib():
 		var err error
-		ortTempPath, err = embedded.MaterializeDylib()
+		ortTempPath, err = embedded.MaterializeDylib(embedMaterializeRoot)
 		if err != nil {
 			log.Fatalf("ORT: failed to materialize embedded dylib: %v", err)
 		}
@@ -217,7 +217,7 @@ func main() {
 	var weightsTempDir string
 	if weightsDir == "" {
 		var err error
-		weightsDir, weightsTempDir, err = embedded.ResolveWeights(onDiskWeightsRoot, backendName)
+		weightsDir, weightsTempDir, err = embedded.ResolveWeights(onDiskWeightsRoot, backendName, embedMaterializeRoot)
 		if err != nil {
 			log.Fatalf("resolve weights for %s: %v", backendName, err)
 		}

@@ -101,20 +101,37 @@ else
 fi
 docker buildx inspect --bootstrap >/dev/null
 
-# ---- 4. Per-arch container builds (load into local daemon) ----------------
+# ---- 4. Per-arch container + host-binary export --------------------------
+# Two artifacts per architecture:
+#   - runtime container (slim binary + /onnx tree) → loaded into local daemon
+#   - fat standalone Linux binary → written to out/<arch>/vad on the host
+rm -rf out
+mkdir -p out
 for arch in $ARCHES; do
     short=$(echo "$arch" | sed 's,linux/,,')
     case "$short" in
         amd64) [ "${SKIP_AMD64:-0}" = 1 ] && { echo "skipping amd64"; continue; } ;;
         arm64) [ "${SKIP_ARM64:-0}" = 1 ] && { echo "skipping arm64"; continue; } ;;
     esac
-    step "Container: $arch  →  ${IMAGE_NAME}:${short}"
+
+    step "Slim container: $arch  →  ${IMAGE_NAME}:${short}"
     docker buildx build \
         --platform "$arch" \
+        --target runtime \
         -t "${IMAGE_NAME}:${short}" \
         --load \
         .
     echo "  built: ${IMAGE_NAME}:${short}  $(docker images --format '{{.Size}}' ${IMAGE_NAME}:${short})"
+
+    step "Fat standalone binary: $arch  →  out/${short}/vad"
+    mkdir -p "out/${short}"
+    docker buildx build \
+        --platform "$arch" \
+        --target export \
+        --output "type=local,dest=out/${short}" \
+        .
+    chmod +x "out/${short}/vad"
+    echo "  built: out/${short}/vad  ($(du -h out/${short}/vad | awk '{print $1}'))"
 done
 
 # ---- 5. Multi-arch manifest (push only) -----------------------------------
@@ -124,6 +141,7 @@ if [ "$PUSH" = 1 ]; then
     LATEST_TAG="${REGISTRY}:latest"
     docker buildx build \
         --platform "$(echo "$ARCHES" | tr ' ' ',')" \
+        --target runtime \
         -t "$MANIFEST_TAG" \
         -t "$LATEST_TAG" \
         --push \
@@ -159,9 +177,13 @@ fi
 # ---- summary --------------------------------------------------------------
 echo ""
 echo "=== Release artifacts ==="
-echo "Native:"
+echo "Native (this host):"
 echo "  bin/vad                       $(du -h bin/vad | awk '{print $1}')   $(file -b bin/vad | head -c 60)"
-echo "Containers (local daemon):"
+echo "Standalone Linux binaries (in out/):"
+for f in out/*/vad; do
+    [ -f "$f" ] && echo "  $f                $(du -h $f | awk '{print $1}')   $(file -b $f | head -c 60)"
+done
+echo "Slim runtime containers (local daemon):"
 docker images "${IMAGE_NAME}" --format "  {{.Repository}}:{{.Tag}}  {{.Size}}" | head
 if [ "$PUSH" = 1 ]; then
     echo "Pushed:"

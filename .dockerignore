@@ -5,3 +5,15 @@ data/benchmarks
 third_party/
 debug/
 *.f32
+
+# Build artifacts that prep-embed.sh recreates fresh inside the container.
+# Leaving these in the build context drags in the host's local OS dylib
+# (.dylib on macOS) alongside the Linux .so, bloating the runtime image.
+internal/embedded/ort/
+internal/embedded/weights/
+
+# Pre-built host binary; the Dockerfile builds its own.
+bin/vad
+basic-vad-web
+cmd/basic-vad-web/basic-vad-web
+cmd/basic-vad-web/audio-server
