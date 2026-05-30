@@ -438,10 +438,13 @@ function renderResults(data) {
     const cssWidth = canvas.clientWidth || 900;
     const rowHeight = 36;
     const padding = 12;
-    // Header band stays at 0 height when the server-side SVG is in play —
-    // the SVG sits above the canvas instead of being painted into it.
-    const useServerSvg = !!(currentAudio && currentAudio.audioId);
-    const headerHeight = useServerSvg ? 24 : 60;
+    // Two waveform views, stacked: the server SVG (audio gRPC → AudioToVectors
+    // → VectorsToSvg) sits in #waveform-svg above the canvas; the canvas's own
+    // header band keeps the JS-rendered waveform so they can be compared
+    // side-by-side. The canvas band always renders at full height regardless
+    // of whether the server SVG is also present.
+    const haveServerSvg = !!(currentAudio && currentAudio.audioId);
+    const headerHeight = 60;
     const cssHeight = headerHeight + padding + (data.results.length * rowHeight) + padding;
     canvas.style.height = cssHeight + 'px';
     canvas.width = cssWidth * dpr;
@@ -453,12 +456,12 @@ function renderResults(data) {
     const duration = data.audio_duration_seconds;
     const xFor = (t) => (t / duration) * cssWidth;
 
-    if (useServerSvg) {
+    if (haveServerSvg) {
         loadServerWaveformSvg(currentAudio.audioId, Math.round(cssWidth), 80);
-    } else {
-        if (els.waveformSvg) els.waveformSvg.innerHTML = '';
-        drawWaveform(ctx, cssWidth, headerHeight, currentAudio ? currentAudio.samples : null);
+    } else if (els.waveformSvg) {
+        els.waveformSvg.innerHTML = '';
     }
+    drawWaveform(ctx, cssWidth, headerHeight, currentAudio ? currentAudio.samples : null);
 
     ctx.fillStyle = '#888';
     ctx.font = '10px system-ui, sans-serif';
