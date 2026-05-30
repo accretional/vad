@@ -1,132 +1,126 @@
 #!/bin/bash
+# basic-vad-web/run.sh
+#
+# Spin up one or more vad gRPC backends + the HTTP demo server in front.
+#
+# Usage:
+#   ./run.sh                              # pyannote on :50051, demo on :8080
+#   ./run.sh --all                        # all 4 working backends on :50051..:50054
+#   ./run.sh --backends pyannote,silero   # custom subset
+#   PORT=9000 ./run.sh                    # change demo HTTP port
+#
+# Requires ./bin/vad to already exist. Run ./build-native.sh first if not.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-PORT="${1:-8080}"
+HTTP_PORT="${PORT:-8080}"
+VAD_BIN="$REPO_ROOT/bin/vad"
 
-# --- Detect ORT library ---
+# Parse args.
+BACKENDS=""
+case "${1:-}" in
+    --all)
+        BACKENDS="pyannote,fsmn,firered,silero"
+        shift || true
+        ;;
+    --backends)
+        BACKENDS="$2"
+        shift 2
+        ;;
+    *)
+        # Default: one pyannote backend.
+        BACKENDS="pyannote"
+        ;;
+esac
 
-if [ -z "${ONNXRUNTIME_LIB:-}" ]; then
-    ARCH=$(uname -m)
-    OS=$(uname -s)
-    if [ "$OS" = "Darwin" ]; then
-        if [ "$ARCH" = "arm64" ]; then PLATFORM="osx-arm64"; else PLATFORM="osx-x86_64"; fi
-        ORT_LIB="libonnxruntime.dylib"
-    else
-        if [ "$ARCH" = "x86_64" ]; then PLATFORM="linux-x64"; else PLATFORM="linux-aarch64"; fi
-        ORT_LIB="libonnxruntime.so"
-    fi
-    ORT_DIR="third_party/onnxruntime-${PLATFORM}-1.22.0/lib"
-    if [ -d "$ORT_DIR" ]; then
-        ORT_ABS="$(cd "$ORT_DIR" && pwd)"
-        export ONNXRUNTIME_LIB="${ORT_ABS}/${ORT_LIB}"
-        if [ "$OS" = "Darwin" ]; then
-            export DYLD_LIBRARY_PATH="${ORT_ABS}:${DYLD_LIBRARY_PATH:-}"
-        else
-            export LD_LIBRARY_PATH="${ORT_ABS}:${LD_LIBRARY_PATH:-}"
-        fi
-    else
-        echo "ERROR: ORT not found at $ORT_DIR. Run ./setup.sh first."
-        exit 1
-    fi
+if [ ! -x "$VAD_BIN" ]; then
+    echo "ERROR: $VAD_BIN not found. Run ./build-native.sh first." >&2
+    exit 1
 fi
 
-echo "Using ORT: $ONNXRUNTIME_LIB"
-
-# --- Build ---
-
+# Build the demo HTTP server.
 echo "=== Building basic-vad-web ==="
-BIN="$SCRIPT_DIR/basic-vad-web"
-go build -o "$BIN" ./cmd/basic-vad-web/
+DEMO_BIN="$SCRIPT_DIR/basic-vad-web"
+go build -o "$DEMO_BIN" ./cmd/basic-vad-web/
 
-# --- Run ---
-
-URL="http://localhost:${PORT}"
-
-echo "=== Starting server on ${URL} ==="
-"$BIN" -port "$PORT" &
-SERVER_PID=$!
+# Spawn one vad instance per backend, on consecutive ports starting at 50051.
+PIDS=()
+ADDRS=()
+BASE_PORT=50051
+i=0
+IFS=',' read -ra BACKEND_LIST <<< "$BACKENDS"
+for b in "${BACKEND_LIST[@]}"; do
+    b_trim="$(echo "$b" | xargs)"
+    port=$((BASE_PORT + i))
+    short="$(echo "$b_trim" | tr '[:lower:]' '[:upper:]')"
+    echo "=== Starting vad backend $short on :$port ==="
+    "$VAD_BIN" -backend "$b_trim" -port "$port" &
+    PIDS+=($!)
+    ADDRS+=("${short}=localhost:${port}")
+    i=$((i + 1))
+done
 
 cleanup() {
     echo ""
-    echo "Stopping server (PID $SERVER_PID)..."
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-    rm -f "$BIN"
+    echo "Stopping demo + backends..."
+    for pid in "${PIDS[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    [ -n "${DEMO_PID:-}" ] && kill "$DEMO_PID" 2>/dev/null || true
+    wait 2>/dev/null || true
+    rm -f "$DEMO_BIN"
 }
 trap cleanup EXIT
 
-# Wait for server to be ready
-for i in $(seq 1 15); do
-    if curl -s -o /dev/null "$URL/" 2>/dev/null; then
-        echo "Server is ready."
-        break
-    fi
-    sleep 0.5
+# Give the backends a moment to bind + load weights.
+echo "Waiting for backends to come up..."
+for addr_spec in "${ADDRS[@]}"; do
+    addr="${addr_spec#*=}"
+    host="${addr%%:*}"
+    port="${addr##*:}"
+    for attempt in $(seq 1 40); do
+        if nc -z "$host" "$port" 2>/dev/null; then
+            echo "  $addr_spec ready"
+            break
+        fi
+        sleep 0.25
+        if [ "$attempt" = "40" ]; then
+            echo "  $addr_spec NEVER CAME UP — check vad logs above" >&2
+        fi
+    done
 done
 
-# --- Validate ---
+# Join addresses for -vad-addrs.
+VAD_ADDRS=$(IFS=','; echo "${ADDRS[*]}")
 
 echo ""
-echo "=== Validating responses ==="
+echo "=== Starting demo HTTP server on :$HTTP_PORT ==="
+echo "    -vad-addrs $VAD_ADDRS"
+"$DEMO_BIN" -port "$HTTP_PORT" -vad-addrs "$VAD_ADDRS" &
+DEMO_PID=$!
 
-# Check index.html
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/")
-if [ "$STATUS" = "200" ]; then
-    echo "  GET /           -> $STATUS OK"
-else
-    echo "  GET /           -> $STATUS FAIL"
-    exit 1
-fi
+# Wait for demo to be ready.
+URL="http://localhost:${HTTP_PORT}"
+for attempt in $(seq 1 30); do
+    if curl -s -o /dev/null "$URL/"; then
+        echo "Demo ready: $URL"
+        break
+    fi
+    sleep 0.25
+done
 
-# Check CSS
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/static/style.css")
-if [ "$STATUS" = "200" ]; then
-    echo "  GET /static/style.css -> $STATUS OK"
-else
-    echo "  GET /static/style.css -> $STATUS FAIL"
-    exit 1
-fi
-
-# Check JS
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/static/app.js")
-if [ "$STATUS" = "200" ]; then
-    echo "  GET /static/app.js   -> $STATUS OK"
-else
-    echo "  GET /static/app.js   -> $STATUS FAIL"
-    exit 1
-fi
-
-# Check 404
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/nonexistent")
-if [ "$STATUS" = "404" ]; then
-    echo "  GET /nonexistent     -> $STATUS OK (expected)"
-else
-    echo "  GET /nonexistent     -> $STATUS FAIL (expected 404)"
-    exit 1
-fi
-
-echo ""
-echo "=== All checks passed ==="
-
-# --- Open browser (skip in CI mode) ---
-
-if [ "${CI:-}" = "1" ] || [ "${1:-}" = "--ci" ]; then
-    echo "CI mode — skipping browser open."
-else
-    echo "Opening $URL in browser..."
+# Open browser unless CI.
+if [ "${CI:-}" != "1" ]; then
     if command -v open &>/dev/null; then
         open "$URL"
     elif command -v xdg-open &>/dev/null; then
         xdg-open "$URL"
-    else
-        echo "  (no browser opener found, visit $URL manually)"
     fi
-
-    echo ""
-    echo "Press Ctrl+C to stop the server."
-    wait "$SERVER_PID"
 fi
+
+echo ""
+echo "Press Ctrl+C to stop."
+wait "$DEMO_PID"

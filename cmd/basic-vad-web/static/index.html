@@ -3,51 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VAD - Voice Activity Detection</title>
+    <title>VAD - Multi-Backend Voice Activity Detection</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="timer-bar">
-        <span id="timer-text">Closing in 25s</span>
-        <button id="timer-pause">Pause</button>
-    </div>
-    <div class="container">
+    <header>
         <h1>Voice Activity Detection</h1>
-        <p class="subtitle">Pyannote Segmentation 3.0 via ONNX</p>
+        <p class="subtitle">Compare segmentations across multiple VAD backends, then try live streaming over WebSocket.</p>
+    </header>
 
-        <div class="upload-section">
-            <label for="audio-file" class="upload-label">
-                <span id="upload-text">Select an audio file (.mp3, .wav, .ogg, .f32)</span>
-                <input type="file" id="audio-file" accept=".mp3,.wav,.ogg,.flac,.f32,.pcm,.raw">
-            </label>
-            <button id="detect-btn" disabled>Detect Speech</button>
-        </div>
+    <main class="container">
+        <section id="describe-section" class="card">
+            <h2>Service</h2>
+            <div id="service-meta" class="meta">Loading <code>/describe</code>...</div>
+        </section>
 
-        <div id="status" class="status hidden"></div>
+        <section id="batch-section" class="card">
+            <h2>1. Compare backends on a clip</h2>
 
-        <div id="results" class="results hidden">
-            <h2>Results</h2>
-            <div class="summary">
-                <span id="summary-segments"></span>
-                <span id="summary-speakers"></span>
-                <span id="summary-duration"></span>
+            <div class="source-picker">
+                <div class="source-option">
+                    <label for="sample-select">Sample:</label>
+                    <select id="sample-select">
+                        <option value="">-- pick a bundled clip --</option>
+                    </select>
+                </div>
+                <div class="source-option">
+                    <label for="audio-file" class="upload-label">
+                        <span id="upload-text">Upload audio file</span>
+                        <input type="file" id="audio-file" accept="audio/*">
+                    </label>
+                </div>
+                <div class="source-option">
+                    <button id="record-btn">Start recording</button>
+                    <span id="record-state" class="record-state"></span>
+                </div>
             </div>
-            <table id="segments-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Start (s)</th>
-                        <th>End (s)</th>
-                        <th>Duration (s)</th>
-                        <th>Speaker</th>
-                        <th>Confidence</th>
-                        <th>Play</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        </div>
-    </div>
+
+            <div id="preview-block" class="preview hidden">
+                <audio id="preview-audio" controls></audio>
+                <span id="preview-meta"></span>
+            </div>
+
+            <div id="model-picker" class="model-picker">
+                <span class="picker-label">Backends to run:</span>
+                <div id="model-checkboxes"></div>
+            </div>
+
+            <div class="actions">
+                <button id="detect-btn" disabled>Run detection</button>
+                <span id="batch-status" class="status-inline"></span>
+            </div>
+
+            <div id="results" class="results hidden">
+                <h3>Results</h3>
+                <canvas id="timeline-canvas" width="900" height="200"></canvas>
+                <div id="legend" class="legend"></div>
+                <div id="result-summary" class="summary-grid"></div>
+            </div>
+        </section>
+
+        <section id="live-section" class="card">
+            <h2>2. Live streaming (WebSocket -> DetectStream)</h2>
+            <p class="hint">Speak into your mic. We send ~100 ms float32 chunks to the selected backend and render activity events as they arrive.</p>
+
+            <div class="live-controls">
+                <label for="live-model">Backend:</label>
+                <select id="live-model"></select>
+                <button id="live-start">Start mic</button>
+                <button id="live-stop" disabled>Stop</button>
+            </div>
+
+            <div class="live-state">
+                <div id="speech-indicator" class="indicator dim">
+                    <span class="dot"></span>
+                    <span class="indicator-text">idle</span>
+                </div>
+                <div id="live-segments" class="live-segments"></div>
+            </div>
+        </section>
+    </main>
+
     <script src="/static/app.js"></script>
 </body>
 </html>
