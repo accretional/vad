@@ -68,16 +68,47 @@ bash setup.sh
 step "02 build_clients.sh — regenerate Go gRPC bindings"
 bash scripts/build_clients.sh
 
-# ---- 03. clean-tree gate ------------------------------------------------
+# ---- 03. clean-tree + branch-sync gate ----------------------------------
 # bin/vad gets rebuilt by build_bin.sh; allow it to be modified going in.
-step "03 clean-tree gate"
+step "03 clean-tree + branch-sync gate"
 if ! git diff --quiet -- . ':!bin/vad' || ! git diff --cached --quiet -- . ':!bin/vad'; then
     die "working tree dirty (commit / stash; or stale generated client from step 02):
 $(git status --short -- . ':!bin/vad')"
 fi
 
-GIT_SHA=$(git rev-parse --short HEAD)
+# Require: on the release branch (default main) AND fully synced with
+# origin. This ties the release to a commit that is publicly visible
+# right now — no risk of releasing stale or unpushed code. The contract
+# is: merge your release commit via PR like any other change, pull, run
+# release.sh.
+REL_BRANCH="${RELEASE_BRANCH:-main}"
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$GIT_BRANCH" != "$REL_BRANCH" ]; then
+    die "must be on '$REL_BRANCH' to release; you are on '$GIT_BRANCH'.
+Set RELEASE_BRANCH=<other> only if you intentionally release from a
+non-main branch (e.g. a long-lived release/ branch)."
+fi
+echo "  fetching origin/$REL_BRANCH to compare …"
+if ! git fetch origin "$REL_BRANCH" 2>&1 | sed 's/^/  /'; then
+    die "git fetch origin $REL_BRANCH failed (network? auth?)"
+fi
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA=$(git rev-parse "origin/$REL_BRANCH")
+BASE_SHA=$(git merge-base HEAD "origin/$REL_BRANCH")
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+    if [ "$LOCAL_SHA" = "$BASE_SHA" ]; then
+        die "local '$REL_BRANCH' is BEHIND origin (need: git pull --ff-only)"
+    elif [ "$REMOTE_SHA" = "$BASE_SHA" ]; then
+        die "local '$REL_BRANCH' is AHEAD of origin (need: git push origin $REL_BRANCH).
+The release tag must point at a commit origin already has — don't push
+release commits as a side effect of release.sh."
+    else
+        die "local '$REL_BRANCH' has DIVERGED from origin (reconcile manually)"
+    fi
+fi
+echo "  on $REL_BRANCH @ $(git rev-parse --short HEAD) — fully synced with origin"
+
+GIT_SHA=$(git rev-parse --short HEAD)
 BUILD_STARTED=$(nowiso)
 TAG="${TAG:-v$(date -u +%Y.%m.%d)-${GIT_SHA}}"
 LOG_DIR="release-logs/${TAG}"

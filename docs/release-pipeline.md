@@ -22,20 +22,56 @@ review gate, and what's planned next.
 ```
 01  setup.sh                        verify deps
 02  scripts/build_clients.sh        regen Go (+ optional Python) gRPC bindings
-03  clean-tree gate                 catches stale generated code
+03  clean-tree + branch-sync gate   on RELEASE_BRANCH (default main), HEAD == origin
 04  test.sh                         go vet, unit, integration, Docker e2e + fetch
 05  scripts/build_bin.sh            native binary (./bin/vad for the host)
 06  scripts/build_containers.sh     per-arch slim containers + fat host binaries
 07  scripts/validate_builds.sh      5-port RPC validation matrix
 08  aggregate metadata.json + logs
 09  scripts/review_release.sh       BLOCKING — operator clicks ACCEPT or CANCEL
-10  release_decision.log + release_<tag>_<sha>.zip
+10  release_decision.log + accretional-vad-release_<tag>_<sha>.zip
 11  scripts/github_push.sh          multi-arch push + git tag + gh release
 12  post_release.html               opens in browser; download link + provenance
 ```
 
 Failure in any phase aborts the pipeline. Review CANCEL exits non-zero
 with nothing pushed; release-logs/`<tag>`/ is preserved for postmortem.
+
+## What touches git / GitHub
+
+The pipeline is deliberately conservative about upstream state. It
+**reads** git in many phases (to know the tag, branch, SHA) but only
+**writes** to GitHub at the very end, and never pushes your branch.
+
+| Phase | Reads | Writes |
+|---|---|---|
+| 03 gate | branch name, HEAD, `origin/<RELEASE_BRANCH>` (after `git fetch`) | nothing |
+| 04–10  | HEAD, branch | nothing |
+| 11 push | HEAD | `docker buildx --push` → GHCR; `git tag -a <TAG>` + `git push origin <TAG>`; `gh release create <TAG> ... <zip> <binaries>` |
+| 12 page | accept-log | local HTML only |
+
+In particular the pipeline does **not** push your release branch as a
+side effect. The contract is: *the commit being released is exactly
+what's on `origin/<RELEASE_BRANCH>` right now*. You merge your release
+commit via PR like any other change, `git pull`, then `bash release.sh`.
+
+The phase-03 gate fails fast (before tests, before building) on any of:
+- not on `$RELEASE_BRANCH` (default `main`; override via env var)
+- local HEAD behind origin (`git pull --ff-only` first)
+- local HEAD ahead of origin (`git push` first; you don't want
+  release.sh sneaking your unreviewed commits to main)
+- diverged (reconcile manually)
+
+What lands on GitHub at phase 11:
+- **Container manifest** at `${REGISTRY:-ghcr.io/accretional/vad}:<TAG>`
+  (plus a `:latest` alias) — pullable with
+  `docker pull ghcr.io/accretional/vad:<TAG>`. Part of GitHub Packages.
+- **A git tag** at the commit you released from. The tag is annotated
+  with `Release <TAG>` and pushed to origin.
+- **A GitHub Release** at `https://github.com/<org>/vad/releases/tag/<TAG>`
+  with release notes auto-generated from PR titles since the previous
+  tag (`gh release create --generate-notes`). The release page carries
+  the **release zip + standalone binaries** as downloadable assets.
 
 ## The per-phase scripts
 
