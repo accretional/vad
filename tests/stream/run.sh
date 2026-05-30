@@ -34,7 +34,7 @@ echo "==> generating Python stubs to $STUB_DIR"
   --proto_path="$REPO_ROOT/proto" \
   --python_out="$STUB_DIR" \
   --grpc_python_out="$STUB_DIR" \
-  proto/vad.proto
+  vad.proto
 
 echo "==> running stream client against ${ADDR:-localhost:50051}"
 exec env PYTHONPATH="$STUB_DIR" "$PY" "$REPO_ROOT/tests/stream/stream_client.py" "$AUDIO" "$@"
