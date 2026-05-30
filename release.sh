@@ -94,10 +94,10 @@ echo "  size:  $(du -h bin/vad | awk '{print $1}')"
 
 # ---- 3. buildx setup ------------------------------------------------------
 step "buildx (docker-container driver)"
-if ! docker buildx ls | grep -q "^${BUILDER_NAME}"; then
-    docker buildx create --name "$BUILDER_NAME" --driver docker-container --use
-else
+if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
     docker buildx use "$BUILDER_NAME"
+else
+    docker buildx create --name "$BUILDER_NAME" --driver docker-container --use
 fi
 docker buildx inspect --bootstrap >/dev/null
 
