@@ -31,3 +31,8 @@ cmd/basic-vad-web/basic-vad-web
 cmd/basic-vad-web/audio-server
 # Built one-off by ad-hoc `go build` invocations at the repo root.
 /basic-vad-web
+
+# release.sh artifacts and logs (per-release; never committed).
+/out/
+/release-logs/
+/release_*.zip

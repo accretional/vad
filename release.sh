@@ -141,10 +141,12 @@ fi
 step "Generate gRPC clients (Go)"
 bash scripts/gen-proto.sh
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
+# bin/vad is regenerated below by build-native.sh; exclude it from the
+# dirty-tree check so an existing rebuild doesn't block a fresh release.
+if ! git diff --quiet -- . ':!bin/vad' || ! git diff --cached --quiet -- . ':!bin/vad'; then
     die "working tree is dirty (commit or stash first; could be stale
 generated client code — re-check after gen-proto ran):
-$(git status --short)"
+$(git status --short -- . ':!bin/vad')"
 fi
 
 GIT_SHA=$(git rev-parse --short HEAD)
