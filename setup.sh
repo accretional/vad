@@ -154,8 +154,7 @@ for backend in fsmn-vad firered-vad; do
     else
         echo "WARNING: weights/${backend}/model.onnx missing. The -backend ${backend%-vad} flag won't work."
         echo "  Either pull the latest commit (weights are bundled), or regenerate via:"
-        echo "    /Volumes/wd_office_1/repos/<bench_venv>/.venv/bin/python \\"
-        echo "      /Volumes/wd_office_1/repos/speax/benchmarks/vad/export_${backend//-/_}_to_onnx.py"
+        echo "    https://github.com/accretional/speax/blob/main/benchmarks/vad/export_${backend//-/_}_to_onnx.py"
     fi
 done
 
