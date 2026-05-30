@@ -210,6 +210,91 @@ echo "  built: $ZIP_NAME ($(human_size "$ZIP_NAME"))"
 step "11 github_push.sh — push images + create GH release"
 TAG="$TAG" ZIP="$ZIP_NAME" bash scripts/github_push.sh 2>&1 | tee "$LOG_DIR/11_github_push.log"
 
+# ---- 12. post-release HTML (download link + provenance) ----------------
+step "12 post-release page — opens in browser (non-blocking)"
+POST_HTML="$LOG_DIR/post_release.html"
+ZIP_SHA=$(sha256_file "$ZIP_NAME")
+ACCEPTED_AT=$(awk '/^release ACCEPTED/{print $4, $5, $6}' "$LOG_DIR/release_decision.log" 2>/dev/null)
+REPO_URL=$(git config --get remote.origin.url 2>/dev/null | sed 's,\.git$,,;s,^git@github.com:,https://github.com/,')
+GH_RELEASE_URL="${REPO_URL}/releases/tag/${TAG}"
+ZIP_ABS="$(cd "$(dirname "$ZIP_NAME")" && pwd)/$(basename "$ZIP_NAME")"
+
+# Artifact rows
+ARTIFACT_ROWS=""
+emit_row() {
+    local name="$1" path="$2" size="$3" sha="$4"
+    ARTIFACT_ROWS="${ARTIFACT_ROWS}<tr><td>${name}</td><td><code>${path}</code></td><td>${size}</td><td><code>${sha}</code></td></tr>"
+}
+emit_row "Release zip" "$ZIP_ABS" "$(human_size "$ZIP_NAME")" "$ZIP_SHA"
+[ -f bin/vad ] && emit_row "Native binary" "bin/vad" "$(human_size bin/vad)" "$(sha256_file bin/vad)"
+for arch in amd64 arm64; do
+    f="out/${arch}/vad"
+    [ -f "$f" ] && emit_row "Fat linux/${arch} binary" "$f" "$(human_size "$f")" "$(sha256_file "$f")"
+done
+for arch in amd64 arm64; do
+    img="vad:${arch}"
+    if id=$(docker image inspect -f '{{.Id}}' "$img" 2>/dev/null); then
+        emit_row "Container image (${arch})" "$img" "$(docker images --format '{{.Size}}' "$img" | head -1)" "${id##sha256:}"
+    fi
+done
+
+cat > "$POST_HTML" <<EOF
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>${TAG} released</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;max-width:920px;margin:32px auto;padding:0 16px;color:#1d1d1f}
+h1{font-size:24px;margin:0 0 4px}.subtitle{color:#666;margin-bottom:22px}
+section{background:#f7f7f9;border-radius:8px;padding:14px 18px;margin:12px 0}
+section h2{margin:0 0 8px;font-size:13px;color:#444;text-transform:uppercase;letter-spacing:.04em}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:6px 10px 6px 0;text-align:left;vertical-align:top;border-bottom:1px solid #eee}
+th{color:#555;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+code{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
+a{color:#06c;text-decoration:none}a:hover{text-decoration:underline}
+.dl{display:inline-block;background:#1b7e1b;color:white;padding:10px 22px;border-radius:6px;font-weight:600;margin-top:8px}
+.dl:hover{background:#1d8a1d;text-decoration:none}
+</style></head><body>
+<h1>✅ ${TAG} released</h1>
+<div class="subtitle">Pushed to ${REPO_URL}${REPO_URL:+ — }<a href="${GH_RELEASE_URL}">${GH_RELEASE_URL}</a></div>
+
+<section>
+  <h2>Download</h2>
+  <a class="dl" href="file://${ZIP_ABS}" download>Download ${ZIP_NAME} ($(human_size "$ZIP_NAME"))</a>
+  <p style="margin-top:10px;color:#555">sha256: <code>${ZIP_SHA}</code></p>
+</section>
+
+<section>
+  <h2>Release</h2>
+  <table>
+    <tr><th>Tag</th><td><code>${TAG}</code></td></tr>
+    <tr><th>Commit</th><td><code>${GIT_SHA}</code> on ${GIT_BRANCH}</td></tr>
+    <tr><th>Repo</th><td>${REPO_URL}</td></tr>
+    <tr><th>Accepted at</th><td>${ACCEPTED_AT}</td></tr>
+    <tr><th>Accepted by</th><td>${USER:-unknown}@$(hostname -s)</td></tr>
+    <tr><th>Build host</th><td>$(uname -s)/$(uname -m)</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Artifacts &amp; checksums</h2>
+  <table>
+    <tr><th>Name</th><th>Path / Ref</th><th>Size</th><th>sha256 / image id</th></tr>
+    ${ARTIFACT_ROWS}
+  </table>
+</section>
+
+<section>
+  <h2>Pull the container</h2>
+  <pre><code>docker pull ${REGISTRY:-ghcr.io/accretional/vad}:${TAG}
+docker run --rm -p 50051:50051 ${REGISTRY:-ghcr.io/accretional/vad}:${TAG}</code></pre>
+</section>
+</body></html>
+EOF
+
+echo "  wrote: $POST_HTML"
+if command -v open >/dev/null 2>&1; then open "$POST_HTML"
+elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$POST_HTML"
+fi
+
 # ---- summary -----------------------------------------------------------
 echo ""
 echo "==[ Release artifacts (${TAG}) ]=="

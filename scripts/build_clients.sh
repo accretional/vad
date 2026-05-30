@@ -38,5 +38,24 @@ protoc \
     -I=proto \
     proto/vad.proto
 
-echo "generated:"
+echo "generated (Go):"
 ls -l proto/vadpb/*.pb.go | awk '{printf "  %s  %s\n", $5, $NF}'
+
+# Python client (optional — only if grpcio-tools is installed).
+# Drops into proto/vadpy/{vad_pb2.py, vad_pb2_grpc.py}. Clients can
+# then `from vadpy import vad_pb2, vad_pb2_grpc`.
+if command -v python3 >/dev/null 2>&1 && python3 -c "import grpc_tools" 2>/dev/null; then
+    mkdir -p proto/vadpy
+    python3 -m grpc_tools.protoc \
+        -I=proto \
+        --python_out=proto/vadpy \
+        --grpc_python_out=proto/vadpy \
+        proto/vad.proto
+    echo "generated (Python):"
+    ls -l proto/vadpy/*.py | awk '{printf "  %s  %s\n", $5, $NF}'
+else
+    echo "(Python client skipped: pip install grpcio-tools to enable)"
+fi
+
+# TODO: also generate C++ and Java clients when we have downstream
+# consumers that need them. Each is one additional --<lang>_out plugin.

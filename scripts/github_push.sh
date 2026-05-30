@@ -33,6 +33,21 @@ if [ ! -f "$ZIP" ]; then
     exit 1
 fi
 
+# Dev-only safety knob: set RELEASE_DRY_RUN=1 to log every push command
+# without actually invoking it. Lets you exercise release.sh end-to-end
+# locally without creating real git tags or touching the registry. NOT a
+# "--skip-*" flag (every step still runs); this only changes the mode
+# of the push step.
+if [ "${RELEASE_DRY_RUN:-0}" = 1 ]; then
+    echo "=== DRY RUN — would push to $REGISTRY with tag $TAG, zip $ZIP ==="
+    echo "  docker buildx build --platform $(echo "$ARCHES" | tr ' ' ',') --target runtime \\"
+    echo "                      -t ${REGISTRY}:${TAG} -t ${REGISTRY}:latest --push ."
+    echo "  git tag -a $TAG -m 'Release $TAG'"
+    echo "  git push origin $TAG"
+    echo "  gh release create $TAG --title $TAG --generate-notes $ZIP bin/vad out/amd64/vad out/arm64/vad"
+    exit 0
+fi
+
 # ---- multi-arch image push ---------------------------------------------
 echo ""
 echo "=== push multi-arch manifest to $REGISTRY ==="
