@@ -21,6 +21,71 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// VADModel selects which backend implementation the server loads at startup.
+// Wire values are stable; new entries must append at the next free number.
+type VADModel int32
+
+const (
+	VADModel_VAD_MODEL_UNSPECIFIED VADModel = 0
+	// Pyannote Segmentation 3.0 — full diarization, 3 speakers max.
+	VADModel_VAD_MODEL_PYANNOTE VADModel = 1
+	// FunASR FSMN-VAD — tiny, VAD-only, Chinese-trained (works on EN, validate).
+	VADModel_VAD_MODEL_FSMN VADModel = 2
+	// FireRedTeam DFSMN-VAD — small, VAD-only, English-friendly.
+	VADModel_VAD_MODEL_FIRERED VADModel = 3
+	// NVIDIA Frame_VAD_Multilingual_MarbleNet_v2.0 — multilingual.
+	VADModel_VAD_MODEL_MARBLENET VADModel = 4
+	// Silero VAD — well-known tiny model.
+	VADModel_VAD_MODEL_SILERO VADModel = 5
+)
+
+// Enum value maps for VADModel.
+var (
+	VADModel_name = map[int32]string{
+		0: "VAD_MODEL_UNSPECIFIED",
+		1: "VAD_MODEL_PYANNOTE",
+		2: "VAD_MODEL_FSMN",
+		3: "VAD_MODEL_FIRERED",
+		4: "VAD_MODEL_MARBLENET",
+		5: "VAD_MODEL_SILERO",
+	}
+	VADModel_value = map[string]int32{
+		"VAD_MODEL_UNSPECIFIED": 0,
+		"VAD_MODEL_PYANNOTE":    1,
+		"VAD_MODEL_FSMN":        2,
+		"VAD_MODEL_FIRERED":     3,
+		"VAD_MODEL_MARBLENET":   4,
+		"VAD_MODEL_SILERO":      5,
+	}
+)
+
+func (x VADModel) Enum() *VADModel {
+	p := new(VADModel)
+	*p = x
+	return p
+}
+
+func (x VADModel) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (VADModel) Descriptor() protoreflect.EnumDescriptor {
+	return file_vad_proto_enumTypes[0].Descriptor()
+}
+
+func (VADModel) Type() protoreflect.EnumType {
+	return &file_vad_proto_enumTypes[0]
+}
+
+func (x VADModel) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use VADModel.Descriptor instead.
+func (VADModel) EnumDescriptor() ([]byte, []int) {
+	return file_vad_proto_rawDescGZIP(), []int{0}
+}
+
 // Audio contains raw PCM audio data for voice activity detection.
 type Audio struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -416,6 +481,93 @@ func (x *SpeechActivity) GetSpeechActive() bool {
 	return false
 }
 
+// VADConfig is the server startup configuration. Provided via the -config
+// flag pointing at a textproto file; unset fields fall back to per-model
+// defaults documented in cmd/vad/main.go.
+type VADConfig struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Which backend to load.
+	Model VADModel `protobuf:"varint,1,opt,name=model,proto3,enum=vad.VADModel" json:"model,omitempty"`
+	// Path to the weights directory (or single ONNX file for pyannote). If
+	// empty, a per-model default is used (e.g. weights/fsmn-vad/ for FSMN).
+	WeightsDir string `protobuf:"bytes,2,opt,name=weights_dir,json=weightsDir,proto3" json:"weights_dir,omitempty"`
+	// gRPC port. Defaults to 50051 if 0.
+	Port int32 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
+	// ONNX Runtime shared library path. Falls back to the ONNXRUNTIME_LIB env
+	// var if empty.
+	OnnxruntimeLib string `protobuf:"bytes,4,opt,name=onnxruntime_lib,json=onnxruntimeLib,proto3" json:"onnxruntime_lib,omitempty"`
+	// URL returned by Fetch RPC (only used for pyannote backend; informational
+	// for clients fetching weights for transformers.js).
+	WeightsUrl    string `protobuf:"bytes,5,opt,name=weights_url,json=weightsUrl,proto3" json:"weights_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VADConfig) Reset() {
+	*x = VADConfig{}
+	mi := &file_vad_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VADConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VADConfig) ProtoMessage() {}
+
+func (x *VADConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_vad_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VADConfig.ProtoReflect.Descriptor instead.
+func (*VADConfig) Descriptor() ([]byte, []int) {
+	return file_vad_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *VADConfig) GetModel() VADModel {
+	if x != nil {
+		return x.Model
+	}
+	return VADModel_VAD_MODEL_UNSPECIFIED
+}
+
+func (x *VADConfig) GetWeightsDir() string {
+	if x != nil {
+		return x.WeightsDir
+	}
+	return ""
+}
+
+func (x *VADConfig) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *VADConfig) GetOnnxruntimeLib() string {
+	if x != nil {
+		return x.OnnxruntimeLib
+	}
+	return ""
+}
+
+func (x *VADConfig) GetWeightsUrl() string {
+	if x != nil {
+		return x.WeightsUrl
+	}
+	return ""
+}
+
 // FetchRequest requests the ONNX model weights.
 type FetchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -425,7 +577,7 @@ type FetchRequest struct {
 
 func (x *FetchRequest) Reset() {
 	*x = FetchRequest{}
-	mi := &file_vad_proto_msgTypes[6]
+	mi := &file_vad_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -437,7 +589,7 @@ func (x *FetchRequest) String() string {
 func (*FetchRequest) ProtoMessage() {}
 
 func (x *FetchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_vad_proto_msgTypes[6]
+	mi := &file_vad_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -450,7 +602,7 @@ func (x *FetchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchRequest.ProtoReflect.Descriptor instead.
 func (*FetchRequest) Descriptor() ([]byte, []int) {
-	return file_vad_proto_rawDescGZIP(), []int{6}
+	return file_vad_proto_rawDescGZIP(), []int{7}
 }
 
 // FetchResponse returns model weights either directly or as a URL.
@@ -467,7 +619,7 @@ type FetchResponse struct {
 
 func (x *FetchResponse) Reset() {
 	*x = FetchResponse{}
-	mi := &file_vad_proto_msgTypes[7]
+	mi := &file_vad_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -479,7 +631,7 @@ func (x *FetchResponse) String() string {
 func (*FetchResponse) ProtoMessage() {}
 
 func (x *FetchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_vad_proto_msgTypes[7]
+	mi := &file_vad_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -492,7 +644,7 @@ func (x *FetchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchResponse.ProtoReflect.Descriptor instead.
 func (*FetchResponse) Descriptor() ([]byte, []int) {
-	return file_vad_proto_rawDescGZIP(), []int{7}
+	return file_vad_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *FetchResponse) GetResult() isFetchResponse_Result {
@@ -570,12 +722,27 @@ const file_vad_proto_rawDesc = "" +
 	"\asegment\x18\x03 \x01(\v2\f.vad.SegmentH\x00R\asegmentB\a\n" +
 	"\x05event\"5\n" +
 	"\x0eSpeechActivity\x12#\n" +
-	"\rspeech_active\x18\x01 \x01(\bR\fspeechActive\"\x0e\n" +
+	"\rspeech_active\x18\x01 \x01(\bR\fspeechActive\"\xaf\x01\n" +
+	"\tVADConfig\x12#\n" +
+	"\x05model\x18\x01 \x01(\x0e2\r.vad.VADModelR\x05model\x12\x1f\n" +
+	"\vweights_dir\x18\x02 \x01(\tR\n" +
+	"weightsDir\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\x05R\x04port\x12'\n" +
+	"\x0fonnxruntime_lib\x18\x04 \x01(\tR\x0eonnxruntimeLib\x12\x1f\n" +
+	"\vweights_url\x18\x05 \x01(\tR\n" +
+	"weightsUrl\"\x0e\n" +
 	"\fFetchRequest\"I\n" +
 	"\rFetchResponse\x12\x1a\n" +
 	"\aweights\x18\x01 \x01(\fH\x00R\aweights\x12\x12\n" +
 	"\x03url\x18\x02 \x01(\tH\x00R\x03urlB\b\n" +
-	"\x06result2\xa8\x01\n" +
+	"\x06result*\x97\x01\n" +
+	"\bVADModel\x12\x19\n" +
+	"\x15VAD_MODEL_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12VAD_MODEL_PYANNOTE\x10\x01\x12\x12\n" +
+	"\x0eVAD_MODEL_FSMN\x10\x02\x12\x15\n" +
+	"\x11VAD_MODEL_FIRERED\x10\x03\x12\x17\n" +
+	"\x13VAD_MODEL_MARBLENET\x10\x04\x12\x14\n" +
+	"\x10VAD_MODEL_SILERO\x10\x052\xa8\x01\n" +
 	"\x11VoiceSegmentation\x12&\n" +
 	"\x06Detect\x12\n" +
 	".vad.Audio\x1a\x10.vad.Diarization\x12;\n" +
@@ -594,32 +761,36 @@ func file_vad_proto_rawDescGZIP() []byte {
 	return file_vad_proto_rawDescData
 }
 
-var file_vad_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_vad_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_vad_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_vad_proto_goTypes = []any{
-	(*Audio)(nil),             // 0: vad.Audio
-	(*Diarization)(nil),       // 1: vad.Diarization
-	(*Segment)(nil),           // 2: vad.Segment
-	(*AudioChunk)(nil),        // 3: vad.AudioChunk
-	(*SegmentationEvent)(nil), // 4: vad.SegmentationEvent
-	(*SpeechActivity)(nil),    // 5: vad.SpeechActivity
-	(*FetchRequest)(nil),      // 6: vad.FetchRequest
-	(*FetchResponse)(nil),     // 7: vad.FetchResponse
+	(VADModel)(0),             // 0: vad.VADModel
+	(*Audio)(nil),             // 1: vad.Audio
+	(*Diarization)(nil),       // 2: vad.Diarization
+	(*Segment)(nil),           // 3: vad.Segment
+	(*AudioChunk)(nil),        // 4: vad.AudioChunk
+	(*SegmentationEvent)(nil), // 5: vad.SegmentationEvent
+	(*SpeechActivity)(nil),    // 6: vad.SpeechActivity
+	(*VADConfig)(nil),         // 7: vad.VADConfig
+	(*FetchRequest)(nil),      // 8: vad.FetchRequest
+	(*FetchResponse)(nil),     // 9: vad.FetchResponse
 }
 var file_vad_proto_depIdxs = []int32{
-	2, // 0: vad.Diarization.segments:type_name -> vad.Segment
-	5, // 1: vad.SegmentationEvent.activity:type_name -> vad.SpeechActivity
-	2, // 2: vad.SegmentationEvent.segment:type_name -> vad.Segment
-	0, // 3: vad.VoiceSegmentation.Detect:input_type -> vad.Audio
-	3, // 4: vad.VoiceSegmentation.DetectStream:input_type -> vad.AudioChunk
-	6, // 5: vad.VoiceSegmentation.Fetch:input_type -> vad.FetchRequest
-	1, // 6: vad.VoiceSegmentation.Detect:output_type -> vad.Diarization
-	4, // 7: vad.VoiceSegmentation.DetectStream:output_type -> vad.SegmentationEvent
-	7, // 8: vad.VoiceSegmentation.Fetch:output_type -> vad.FetchResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	3, // 0: vad.Diarization.segments:type_name -> vad.Segment
+	6, // 1: vad.SegmentationEvent.activity:type_name -> vad.SpeechActivity
+	3, // 2: vad.SegmentationEvent.segment:type_name -> vad.Segment
+	0, // 3: vad.VADConfig.model:type_name -> vad.VADModel
+	1, // 4: vad.VoiceSegmentation.Detect:input_type -> vad.Audio
+	4, // 5: vad.VoiceSegmentation.DetectStream:input_type -> vad.AudioChunk
+	8, // 6: vad.VoiceSegmentation.Fetch:input_type -> vad.FetchRequest
+	2, // 7: vad.VoiceSegmentation.Detect:output_type -> vad.Diarization
+	5, // 8: vad.VoiceSegmentation.DetectStream:output_type -> vad.SegmentationEvent
+	9, // 9: vad.VoiceSegmentation.Fetch:output_type -> vad.FetchResponse
+	7, // [7:10] is the sub-list for method output_type
+	4, // [4:7] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_vad_proto_init() }
@@ -631,7 +802,7 @@ func file_vad_proto_init() {
 		(*SegmentationEvent_Activity)(nil),
 		(*SegmentationEvent_Segment)(nil),
 	}
-	file_vad_proto_msgTypes[7].OneofWrappers = []any{
+	file_vad_proto_msgTypes[8].OneofWrappers = []any{
 		(*FetchResponse_Weights)(nil),
 		(*FetchResponse_Url)(nil),
 	}
@@ -640,13 +811,14 @@ func file_vad_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_vad_proto_rawDesc), len(file_vad_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   8,
+			NumEnums:      1,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_vad_proto_goTypes,
 		DependencyIndexes: file_vad_proto_depIdxs,
+		EnumInfos:         file_vad_proto_enumTypes,
 		MessageInfos:      file_vad_proto_msgTypes,
 	}.Build()
 	File_vad_proto = out.File

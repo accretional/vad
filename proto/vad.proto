@@ -98,6 +98,45 @@ message SpeechActivity {
   bool speech_active = 1;
 }
 
+// VADModel selects which backend implementation the server loads at startup.
+// Wire values are stable; new entries must append at the next free number.
+enum VADModel {
+  VAD_MODEL_UNSPECIFIED = 0;
+  // Pyannote Segmentation 3.0 — full diarization, 3 speakers max.
+  VAD_MODEL_PYANNOTE = 1;
+  // FunASR FSMN-VAD — tiny, VAD-only, Chinese-trained (works on EN, validate).
+  VAD_MODEL_FSMN = 2;
+  // FireRedTeam DFSMN-VAD — small, VAD-only, English-friendly.
+  VAD_MODEL_FIRERED = 3;
+  // NVIDIA Frame_VAD_Multilingual_MarbleNet_v2.0 — multilingual.
+  VAD_MODEL_MARBLENET = 4;
+  // Silero VAD — well-known tiny model.
+  VAD_MODEL_SILERO = 5;
+}
+
+// VADConfig is the server startup configuration. Provided via the -config
+// flag pointing at a textproto file; unset fields fall back to per-model
+// defaults documented in cmd/vad/main.go.
+message VADConfig {
+  // Which backend to load.
+  VADModel model = 1;
+
+  // Path to the weights directory (or single ONNX file for pyannote). If
+  // empty, a per-model default is used (e.g. weights/fsmn-vad/ for FSMN).
+  string weights_dir = 2;
+
+  // gRPC port. Defaults to 50051 if 0.
+  int32 port = 3;
+
+  // ONNX Runtime shared library path. Falls back to the ONNXRUNTIME_LIB env
+  // var if empty.
+  string onnxruntime_lib = 4;
+
+  // URL returned by Fetch RPC (only used for pyannote backend; informational
+  // for clients fetching weights for transformers.js).
+  string weights_url = 5;
+}
+
 // FetchRequest requests the ONNX model weights.
 message FetchRequest {}
 

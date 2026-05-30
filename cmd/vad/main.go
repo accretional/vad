@@ -10,88 +10,155 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+	"google.golang.org/protobuf/encoding/prototext"
+
 	"github.com/accretional/vad/internal/server"
 	"github.com/accretional/vad/pkg/vad"
 	pb "github.com/accretional/vad/proto/vadpb"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 )
 
+// defaultWeightsDir returns the on-disk path the server reaches for if
+// VADConfig.weights_dir is unset.
+func defaultWeightsDir(m pb.VADModel) string {
+	switch m {
+	case pb.VADModel_VAD_MODEL_PYANNOTE:
+		return "weights/model.onnx"
+	case pb.VADModel_VAD_MODEL_FSMN:
+		return "weights/fsmn-vad"
+	case pb.VADModel_VAD_MODEL_FIRERED:
+		return "weights/firered-vad"
+	case pb.VADModel_VAD_MODEL_MARBLENET:
+		return "weights/marblenet"
+	case pb.VADModel_VAD_MODEL_SILERO:
+		return "weights/silero"
+	}
+	return ""
+}
+
+// legacyBackendName converts the deprecated -backend string into a VADModel.
+// Returns VAD_MODEL_UNSPECIFIED for unknown / empty values (so the caller
+// can preserve config-file or default behaviour).
+func legacyBackendName(s string) pb.VADModel {
+	switch s {
+	case "":
+		return pb.VADModel_VAD_MODEL_UNSPECIFIED
+	case "pyannote":
+		return pb.VADModel_VAD_MODEL_PYANNOTE
+	case "fsmn":
+		return pb.VADModel_VAD_MODEL_FSMN
+	case "firered":
+		return pb.VADModel_VAD_MODEL_FIRERED
+	case "marblenet":
+		return pb.VADModel_VAD_MODEL_MARBLENET
+	case "silero":
+		return pb.VADModel_VAD_MODEL_SILERO
+	}
+	return pb.VADModel_VAD_MODEL_UNSPECIFIED
+}
+
 func main() {
-	port := flag.Int("port", 50051, "gRPC server port")
-	backend := flag.String("backend", "pyannote",
-		"VAD backend: pyannote | fsmn | firered")
+	configPath := flag.String("config", "",
+		"path to a VADConfig textproto file (see proto/vad.proto for the schema)")
+	backendStr := flag.String("backend", "",
+		"DEPRECATED: legacy backend selector (pyannote | fsmn | firered | marblenet | silero). Prefer -config.")
+	port := flag.Int("port", 0, "gRPC port (overrides config; default 50051)")
 	modelPath := flag.String("model", "",
-		"path to ONNX model (or directory for non-pyannote backends). "+
-			"Default depends on -backend: weights/model.onnx for pyannote, "+
-			"weights/fsmn-vad/ for fsmn, weights/firered-vad/ for firered.")
-	libPath := flag.String("lib", "", "path to ONNX Runtime shared library (or set ONNXRUNTIME_LIB)")
-	weightsURL := flag.String("weights-url", "", "URL to return from Fetch RPC (pyannote only)")
+		"weights dir or ONNX path (overrides config; default per-model under weights/)")
+	libPath := flag.String("lib", "", "ONNX Runtime shared library path (overrides ONNXRUNTIME_LIB env)")
+	weightsURL := flag.String("weights-url", "",
+		"URL returned by Fetch RPC; pyannote-only (overrides config)")
 	flag.Parse()
 
-	ortLib := *libPath
-	if ortLib == "" {
-		ortLib = os.Getenv("ONNXRUNTIME_LIB")
-	}
-	if ortLib == "" {
-		log.Fatal("ONNX Runtime library path required: set -lib flag or ONNXRUNTIME_LIB env var")
+	cfg := &pb.VADConfig{}
+	if *configPath != "" {
+		data, err := os.ReadFile(*configPath)
+		if err != nil {
+			log.Fatalf("read config %s: %v", *configPath, err)
+		}
+		if err := prototext.Unmarshal(data, cfg); err != nil {
+			log.Fatalf("parse config %s: %v", *configPath, err)
+		}
 	}
 
-	if err := vad.InitONNXRuntime(ortLib); err != nil {
+	// CLI flags override individual config fields.
+	if v := legacyBackendName(*backendStr); v != pb.VADModel_VAD_MODEL_UNSPECIFIED {
+		cfg.Model = v
+	}
+	if *port != 0 {
+		cfg.Port = int32(*port)
+	}
+	if *modelPath != "" {
+		cfg.WeightsDir = *modelPath
+	}
+	if *libPath != "" {
+		cfg.OnnxruntimeLib = *libPath
+	}
+	if *weightsURL != "" {
+		cfg.WeightsUrl = *weightsURL
+	}
+
+	// Apply defaults.
+	if cfg.Model == pb.VADModel_VAD_MODEL_UNSPECIFIED {
+		cfg.Model = pb.VADModel_VAD_MODEL_PYANNOTE
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 50051
+	}
+	if cfg.OnnxruntimeLib == "" {
+		cfg.OnnxruntimeLib = os.Getenv("ONNXRUNTIME_LIB")
+	}
+	if cfg.OnnxruntimeLib == "" {
+		log.Fatal("ONNX Runtime library path required: set -lib flag, ONNXRUNTIME_LIB env, " +
+			"or onnxruntime_lib in -config")
+	}
+	if cfg.WeightsDir == "" {
+		cfg.WeightsDir = defaultWeightsDir(cfg.Model)
+	}
+
+	if err := vad.InitONNXRuntime(cfg.OnnxruntimeLib); err != nil {
 		log.Fatalf("Failed to initialize ONNX Runtime: %v", err)
 	}
 	defer vad.DestroyONNXRuntime()
 
-	// Per-backend defaults + load.
 	var (
-		model       vad.Backend
-		pyannotePath string // path for the Fetch RPC (only set for pyannote)
+		backend      vad.Backend
+		pyannotePath string
 		err          error
 	)
-	switch *backend {
-	case "pyannote":
-		path := *modelPath
-		if path == "" {
-			path = "weights/model.onnx"
-		}
-		pyannotePath = path
-		model, err = vad.NewModel(path)
-	case "fsmn":
-		dir := *modelPath
-		if dir == "" {
-			dir = "weights/fsmn-vad"
-		}
-		model, err = vad.NewFSMN(dir)
-	case "firered":
-		dir := *modelPath
-		if dir == "" {
-			dir = "weights/firered-vad"
-		}
-		model, err = vad.NewFireRed(dir)
+	switch cfg.Model {
+	case pb.VADModel_VAD_MODEL_PYANNOTE:
+		pyannotePath = cfg.WeightsDir
+		backend, err = vad.NewModel(cfg.WeightsDir)
+	case pb.VADModel_VAD_MODEL_FSMN:
+		backend, err = vad.NewFSMN(cfg.WeightsDir)
+	case pb.VADModel_VAD_MODEL_FIRERED:
+		backend, err = vad.NewFireRed(cfg.WeightsDir)
+	case pb.VADModel_VAD_MODEL_MARBLENET, pb.VADModel_VAD_MODEL_SILERO:
+		log.Fatalf("backend %s not yet implemented (see TODO.md)", cfg.Model.String())
 	default:
-		log.Fatalf("unknown -backend %q (pyannote | fsmn | firered)", *backend)
+		log.Fatalf("unknown VADModel %v", cfg.Model)
 	}
 	if err != nil {
-		log.Fatalf("Failed to load %s backend: %v", *backend, err)
+		log.Fatalf("Failed to load %s backend: %v", cfg.Model.String(), err)
 	}
-	defer model.Close()
+	defer backend.Close()
 
-	if *backend != "pyannote" && *weightsURL != "" {
-		log.Printf("warning: -weights-url is currently only used by the pyannote backend's Fetch RPC")
+	if cfg.Model != pb.VADModel_VAD_MODEL_PYANNOTE && cfg.WeightsUrl != "" {
+		log.Printf("warning: weights_url is currently only used by the pyannote backend's Fetch RPC")
 	}
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {
-		log.Fatalf("Failed to listen on port %d: %v", *port, err)
+		log.Fatalf("Failed to listen on port %d: %v", cfg.Port, err)
 	}
 
 	grpcServer := grpc.NewServer(
 		grpc.MaxSendMsgSize(32*1024*1024),
 		grpc.MaxRecvMsgSize(32*1024*1024),
 	)
-	pb.RegisterVoiceSegmentationServer(grpcServer, server.New(model, pyannotePath, *weightsURL))
-	// Reflection enables `grpcurl -plaintext localhost:50051 list` against the
-	// live server, which is convenient for ad-hoc debugging.
+	pb.RegisterVoiceSegmentationServer(grpcServer, server.New(backend, pyannotePath, cfg.WeightsUrl))
 	reflection.Register(grpcServer)
 
 	go func() {
@@ -102,25 +169,9 @@ func main() {
 		grpcServer.GracefulStop()
 	}()
 
-	resolved := *modelPath
-	if resolved == "" {
-		resolved = backendDefaultPath(*backend)
-	}
-	log.Printf("VAD gRPC server listening on :%d  (backend=%s, model=%s)",
-		*port, *backend, filepath.Clean(resolved))
+	log.Printf("VAD gRPC server listening on :%d  (model=%s, weights=%s)",
+		cfg.Port, cfg.Model.String(), filepath.Clean(cfg.WeightsDir))
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
-}
-
-func backendDefaultPath(backend string) string {
-	switch backend {
-	case "pyannote":
-		return "weights/model.onnx"
-	case "fsmn":
-		return "weights/fsmn-vad"
-	case "firered":
-		return "weights/firered-vad"
-	}
-	return ""
 }
