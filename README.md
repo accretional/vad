@@ -4,19 +4,71 @@ gRPC voice-activity-detection service with five pluggable backends. All backends
 
 A single self-contained binary (`bin/vad`, ~59 MB on darwin/arm64) bundles every backend's ONNX weights and the matching ONNX Runtime dylib via `go:embed`. No separate setup beyond `bash build-native.sh` once you have Go and ffmpeg.
 
-## Backends
+## Models
 
-| `-backend` | Model | Source | Size | Speaker IDs | Notes |
-|---|---|---|---|---|---|
-| `pyannote` (default) | Pyannote Segmentation 3.0 | [`onnx-community/pyannote-segmentation-3.0`](https://huggingface.co/onnx-community/pyannote-segmentation-3.0) | ~6 MB | yes (up to 3) | Full diarization. |
-| `fsmn` | FunASR FSMN-VAD | [`funasr/fsmn-vad`](https://huggingface.co/funasr/fsmn-vad) (PyTorch → ONNX; export script at [accretional/speax/benchmarks/vad](https://github.com/accretional/speax/tree/main/benchmarks/vad)) | 1.6 MB | no | Smallest. Chinese-trained but works on English; verify accuracy on your audio. |
-| `firered` | FireRedTeam DFSMN-VAD | [`FireRedTeam/FireRedVAD`](https://huggingface.co/FireRedTeam/FireRedVAD) (PyTorch → ONNX) | 2.3 MB | no | Closest in segment quality to pyannote on the bundled sample clips. |
-| `silero` | Silero VAD | [`snakers4/silero-vad`](https://github.com/snakers4/silero-vad) | 1.3 MB | no | Chunked-state streaming model. |
-| `marblenet` | NVIDIA MarbleNet (Frame VAD Multilingual v2.0) | [`nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0`](https://huggingface.co/nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0) | 1 MB | no | Fastest in our benches. Multilingual. NeMo log-mel features (`melspec/`). |
+All five backends ship inside `bin/vad` via `go:embed`. Bench numbers come from the parity reports under [`speax/benchmarks/out/<backend>-onnx/`](https://github.com/accretional/speax/tree/main/benchmarks/out) (ONNX Runtime 1.26.0, CPU EP, warmed, 10 s reference clip).
+
+| `-backend` | Model | Team | Params | Size (ONNX) | Original format | Latency (10s, CPU) | Speaker IDs |
+|---|---|---|---|---|---|---|---|
+| `pyannote` (default) | Pyannote Segmentation 3.0 | pyannote · [[gh]](https://github.com/pyannote/pyannote-audio) [[hf]](https://huggingface.co/pyannote/segmentation-3.0) [[site]](https://www.pyannote.ai/) | ~1.47 M | ~6 MB | PyTorch | ~50 ms | yes (up to 3) |
+| `fsmn` | FunASR FSMN-VAD | Alibaba DAMO · [[gh]](https://github.com/modelscope/FunASR) [[hf]](https://huggingface.co/funasr/fsmn-vad) [[site]](https://www.funasr.com/) | ~440 K | 1.73 MB | PyTorch | 2.4 ms | no |
+| `firered` | FireRed DFSMN-VAD | FireRedTeam (RedNote) · [[gh]](https://github.com/FireRedTeam/FireRedASR) [[hf]](https://huggingface.co/FireRedTeam/FireRedVAD) [[site]](https://fireredteam.github.io/) | ~600 K | 2.34 MB | PyTorch | 4.67 ms | no |
+| `silero` | Silero VAD | Silero · [[gh]](https://github.com/snakers4/silero-vad) [[hf]](https://huggingface.co/onnx-community/silero-vad) [[site]](https://silero.ai/) | ~129 K | 1.26 MB | PyTorch JIT | 66.5 µs/chunk (~21 ms / 10 s) | no |
+| `marblenet` | NVIDIA Frame VAD Multilingual MarbleNet v2.0 | NVIDIA NeMo · [[gh]](https://github.com/NVIDIA/NeMo) [[hf]](https://huggingface.co/nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0) [[site]](https://developer.nvidia.com/nemo-framework) | 91,378 | 362 KB | NeMo (.nemo, PyTorch under the hood) | 0.62 ms | no |
 
 Pure-Go log-Mel features live in two parity-tested packages:
 - `fbank/` — Kaldi-style (Povey/Hamming window, HTK mel, snip_edges); used by FSMN + FireRed. Parity-tested against `kaldi_native_fbank`. See [`fbank/README.md`](fbank/README.md).
 - `melspec/` — NeMo-style (Hann window, Slaney mel, center reflection padding, `log(mel + 2⁻²⁴)`); used by MarbleNet. Parity-tested against NeMo's `AudioToMelSpectrogramPreprocessor`.
+
+## Platforms
+
+What works where today. Bundled `bin/vad` is built per host triple (no fat binary yet); cross-compile by adjusting `GOOS`/`GOARCH` and the embedded ORT dylib in `internal/embedded/`.
+
+### macOS (arm64)
+
+| Target | Status | Notes |
+|---|---|---|
+| CPU | ✅ shipping | Default ORT CPU EP. All 5 backends run end-to-end. |
+| GPU (Metal) | 🚧 planned | ORT 1.22+ ships CoreML EP for darwin/arm64; not wired into `NewDynamicAdvancedSession` calls yet (see `pkg/vad/*.go`). |
+| NPU (Apple Neural Engine) | 🚧 planned | Same CoreML EP — opt-in flag would route eligible ops to the ANE. |
+| Browser (transformers.js / onnxruntime-web) | ✅ shipping | Demo runs all 5 models WASM-side via Web Workers; `Fetch` RPC hands out CDN URLs from per-backend `url.txt` sidecars. |
+| Go package | ✅ shipping | `import "github.com/accretional/vad/pkg/vad"` — see `pkg/vad/`. |
+| gRPC service | ✅ shipping | `./bin/vad` exposes `vad.VoiceSegmentation` (`Detect`, `DetectStream`, `Fetch`). |
+| Standalone app (demo) | ✅ shipping | `./cmd/basic-vad-web/run.sh` brings up vad + audio + demo HTTP. |
+
+### Linux (x86_64)
+
+| Target | Status | Notes |
+|---|---|---|
+| CPU | 🟡 coming soon | ORT linux-x64 dylib is wired into `internal/embedded/` build path; needs CI green-light. |
+| GPU (CUDA / TensorRT) | 🟡 coming soon | — |
+| Browser | 🟡 coming soon | Same WASM bundle; needs Linux-host validation. |
+| Go package | 🟡 coming soon | — |
+| gRPC service | 🟡 coming soon | — |
+| Standalone app (demo) | 🟡 coming soon | — |
+
+### [REDACTED] — *Beyond the Edge, Ambient Inference*
+
+| Target | Status | Notes |
+|---|---|---|
+| ▣▣▣ Core | ⟁ classified ⟁ | Operates in regimes where conventional EPs do not apply. |
+| ▣▣▣ Coprocessor | ⟁ classified ⟁ | Power envelope: *negligible*. Latency floor: *sub-perceptual*. |
+| Browser | ⟂ N/A ⟂ | The browser is downstream. |
+| Go package | ⟁ classified ⟁ | Surface area: undisclosed. |
+| gRPC service | ⟂ N/A ⟂ | Out-of-band transport. |
+| Ambient runtime | ⟁ classified ⟁ | Already on. |
+
+## Interfaces
+
+Ways to consume the project. CLI / HuggingFace endpoint / hosted API are the next planned surfaces.
+
+| Interface | Status | Description |
+|---|---|---|
+| Go binary (`bin/vad`) | ✅ shipping | Self-contained ~59 MB binary (darwin/arm64) bundling every backend's weights and the ORT dylib via `go:embed`. Runs as a gRPC server (`vad.VoiceSegmentation`); selectable backend via `-backend` or `VADConfig` textproto. See [Quickstart](#quickstart). |
+| Web server / standalone app (`cmd/basic-vad-web`) | ✅ shipping | Three-process demo: vad gRPC + speax/audio gRPC + HTTP front. All VAD inference runs in the browser via onnxruntime-web; the demo server proxies `/fetch` for weights, `/upload` for arbitrary-container decoding, `/svg` for waveform rendering, and `/socket` for live mic → DetectStream bridging. See [Browser demo](#browser-demo-cmdbasic-vad-web). |
+| CLI | 🟡 coming soon | One-shot `vad detect input.wav` style invocation (no server). |
+| HuggingFace Inference Endpoint | 🟡 coming soon | Pushed images of each backend; pay-per-second hosted inference. |
+| Public API | 🟡 coming soon | accretional-hosted endpoint with auth + per-model routing. |
 
 ## Quickstart
 
