@@ -14,11 +14,39 @@ doc covers what each is, how it's built, and when to reach for it.
 | `out/arm64/vad` | Standalone `linux/arm64` executable | ORT `.so` + all 5 backends | only fallback | ~39 MB |
 | `vad:amd64` image | Production container for `linux/amd64` | ORT + default backend only | `/onnx/{ort,weights}/` | ~235 MB |
 | `vad:arm64` image | Production container for `linux/arm64` | ORT + default backend only | `/onnx/{ort,weights}/` | ~248 MB |
+| **`release_<tag>_<sha>.zip`** | Permanent release record + downloadable bundle | All of the above + the build/review log dir | n/a | ~97 MB |
 
-Plus, after `release.sh`, the **release zip** (`release_<tag>_<sha>.zip`,
-~96 MB) — bundles all of the above (minus the container images, which
-live in the registry once pushed) along with the full build log
-record under `release-logs/<tag>/`.
+The release zip is itself a first-class artifact: it's what gets
+attached to the GitHub release for download, and it's the auditable
+record of how the release was produced. It contains:
+
+```
+release_<tag>_<sha>.zip
+├── bin/vad                         the native host binary
+├── out/amd64/vad                   the fat linux/amd64 standalone binary
+├── out/arm64/vad                   the fat linux/arm64 standalone binary
+└── release-logs/<tag>/
+    ├── metadata.json               provenance + per-artifact sha256/size +
+    │                               per-validation PASS/FAIL machine-readable
+    ├── 01_setup.log .. 11_github_push.log
+    │                               per-phase tee'd logs
+    ├── 07_validate/
+    │   ├── results.tsv             machine-readable validation table
+    │   ├── native.log              per-artifact validate logs (1 per port)
+    │   ├── fat-amd64.log
+    │   ├── fat-arm64.log
+    │   ├── slim-amd64.log
+    │   ├── slim-arm64.log
+    │   └── _validate               the validator binary itself
+    ├── _release-review             the review server binary
+    ├── release_decision.log        operator verdict + timestamp + accepted-by
+    └── post_release.html           the static download/provenance page
+                                    that opens in browser at the end
+```
+
+The container images don't live in the zip — they live in the registry
+once pushed. Their image IDs / digests are recorded in `metadata.json`
+so the zip is still a complete record of what was shipped.
 
 ## Build modes: fat vs slim
 
