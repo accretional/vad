@@ -1,8 +1,14 @@
 # vad
 
-gRPC voice-activity-detection service with five pluggable backends. All backends speak the same `vad.VoiceSegmentation` proto (`Detect` unary + `DetectStream` bidi streaming + `Fetch` for weights/URL handoff), so clients are backend-agnostic.
+gRPC + ONNX voice-activity-detection service with **>200× realtime VAD throughput**, serving 5 SoTA ONNX VAD models via Go binding, container, gRPC, or in-browser through transformers.js / onnxruntime-web.
 
-A single self-contained binary (`bin/vad`, ~59 MB on darwin/arm64) bundles every backend's ONNX weights and the matching ONNX Runtime dylib via `go:embed`. No separate setup beyond `bash build-native.sh` once you have Go and ffmpeg.
+The gRPC server binary (`bin/vad`, ~59 MB on darwin/arm64) bundles all 5 backends' ONNX weights and the ONNX Runtime dylib via `go:embed` into **a single self-contained binary**. Bidirectional streaming over WebSocket and gRPC supports **>100× realtime audio VAD processing per CPU core**, with the multi-backend comparison demo at [`cmd/basic-vad-web/`](cmd/basic-vad-web/) (`./cmd/basic-vad-web/run.sh` to launch locally).
+
+Models: **pyannote**, **fsmn**, **firered**, **silero**, and **marblenet** VAD all run from a unified ONNX path, with Kaldi- and NeMo-equivalent feature extractors in pure Go (`fbank/`, `melspec/`), parity-tested against the upstream PyTorch / NeMo references to within float32 round-off.
+
+All backends speak the same `vad.VoiceSegmentation` proto (`Detect` unary + `DetectStream` bidi streaming + `Fetch` for weights/URL handoff), so clients are backend-agnostic. As a gRPC service it natively supports client libraries in C++, Python, Go, Java, and other major language runtimes.
+
+Build from source with `bash build-native.sh` — needs Go (and ffmpeg for the demo's audio decoding side-path). Or build the container with `docker build -t vad .` and run `docker run -p 50051:50051 vad`. MIT License.
 
 ## Models
 
@@ -28,35 +34,39 @@ What works where today. Bundled `bin/vad` is built per host triple (no fat binar
 
 | Target | Status | Notes |
 |---|---|---|
-| CPU | ✅ shipping | Default ORT CPU EP. All 5 backends run end-to-end. |
-| GPU (Metal) | 🚧 planned | ORT 1.22+ ships CoreML EP for darwin/arm64; not wired into `NewDynamicAdvancedSession` calls yet (see `pkg/vad/*.go`). |
-| NPU (Apple Neural Engine) | 🚧 planned | Same CoreML EP — opt-in flag would route eligible ops to the ANE. |
-| Browser (transformers.js / onnxruntime-web) | ✅ shipping | Demo runs all 5 models WASM-side via Web Workers; `Fetch` RPC hands out CDN URLs from per-backend `url.txt` sidecars. |
-| Go package | ✅ shipping | `import "github.com/accretional/vad/pkg/vad"` — see `pkg/vad/`. |
-| gRPC service | ✅ shipping | `./bin/vad` exposes `vad.VoiceSegmentation` (`Detect`, `DetectStream`, `Fetch`). |
-| Standalone app (demo) | ✅ shipping | `./cmd/basic-vad-web/run.sh` brings up vad + audio + demo HTTP. |
+| CPU | DONE | Default ORT CPU EP. All 5 backends run end-to-end. |
+| GPU (Metal) | SOON | ORT 1.22+ ships CoreML EP for darwin/arm64; not wired into `NewDynamicAdvancedSession` calls yet (see `pkg/vad/*.go`). |
+| NPU (Apple Neural Engine) | SOON | Same CoreML EP — opt-in flag would route eligible ops to the ANE. |
+| Browser (transformers.js / onnxruntime-web) | DONE | Demo runs all 5 models WASM-side via Web Workers; `Fetch` RPC hands out CDN URLs from per-backend `url.txt` sidecars. |
+| Go package | DONE | `import "github.com/accretional/vad/pkg/vad"` — see `pkg/vad/`. |
+| gRPC service | DONE | `./bin/vad` exposes `vad.VoiceSegmentation` (`Detect`, `DetectStream`, `Fetch`). |
+| Standalone app (demo) | DONE | `./cmd/basic-vad-web/run.sh` brings up vad + audio + demo HTTP. |
+| Container (Docker / colima / OrbStack) | DONE | Self-contained `linux/amd64` image (~70 MB) built via `docker build -t vad .` — ORT dylib + all 5 backends' weights embedded via `go:embed`, no `/weights` mount or `ONNXRUNTIME_LIB` needed. `docker run -p 50051:50051 vad` works out of the box; per-backend e2e matrix in `tests/e2e/all_backends_test.go`. |
 
 ### Linux (x86_64)
 
 | Target | Status | Notes |
 |---|---|---|
-| CPU | 🟡 coming soon | ORT linux-x64 dylib is wired into `internal/embedded/` build path; needs CI green-light. |
-| GPU (CUDA / TensorRT) | 🟡 coming soon | — |
-| Browser | 🟡 coming soon | Same WASM bundle; needs Linux-host validation. |
-| Go package | 🟡 coming soon | — |
-| gRPC service | 🟡 coming soon | — |
-| Standalone app (demo) | 🟡 coming soon | — |
+| CPU | DONE (in container) / PENDING (native) | The Dockerfile produces a fully self-contained `linux/amd64` binary today (`internal/embedded/ort_linux_amd64.go` wires the embed). Native (non-container) Linux build needs validation on actual Linux hardware before flipping the column. |
+| GPU (CUDA / TensorRT) | SOON | — |
+| Browser | PENDING | Same WASM bundle; needs Linux-host validation. |
+| Go package | PENDING | — |
+| gRPC service | PENDING | — |
 
-### [REDACTED] — *Beyond the Edge, Ambient Inference*
+### Windows
+| Target | Status | Notes |
+|---|---|---|
+| Downloadable Executable | MAYBE | Reach out if you're interested in testing/validating support across Windows modalities! |
+
+### "Beyond the Edge", Ultra-low power/ambient inference
 
 | Target | Status | Notes |
 |---|---|---|
-| ▣▣▣ Core | ⟁ classified ⟁ | Operates in regimes where conventional EPs do not apply. |
-| ▣▣▣ Coprocessor | ⟁ classified ⟁ | Power envelope: *negligible*. Latency floor: *sub-perceptual*. |
-| Browser | ⟂ N/A ⟂ | The browser is downstream. |
-| Go package | ⟁ classified ⟁ | Surface area: undisclosed. |
-| gRPC service | ⟂ N/A ⟂ | Out-of-band transport. |
-| Ambient runtime | ⟁ classified ⟁ | Already on. |
+| Edge | SOON | Low latency edge inference |
+| "The Board" | CONTACT US | Voice AI inference, in any shape |
+| "The Dongle" | CONTACT US | Voice AI inference, over the Serial Bus |
+| "The Wire" | CONTACT US | Cutting edge Network-level Voice inference hardware |
+
 
 ## Interfaces
 
@@ -64,16 +74,19 @@ Ways to consume the project. CLI / HuggingFace endpoint / hosted API are the nex
 
 | Interface | Status | Description |
 |---|---|---|
-| Go binary (`bin/vad`) | ✅ shipping | Self-contained ~59 MB binary (darwin/arm64) bundling every backend's weights and the ORT dylib via `go:embed`. Runs as a gRPC server (`vad.VoiceSegmentation`); selectable backend via `-backend` or `VADConfig` textproto. See [Quickstart](#quickstart). |
-| Web server / standalone app (`cmd/basic-vad-web`) | ✅ shipping | Three-process demo: vad gRPC + speax/audio gRPC + HTTP front. All VAD inference runs in the browser via onnxruntime-web; the demo server proxies `/fetch` for weights, `/upload` for arbitrary-container decoding, `/svg` for waveform rendering, and `/socket` for live mic → DetectStream bridging. See [Browser demo](#browser-demo-cmdbasic-vad-web). |
-| CLI | 🟡 coming soon | One-shot `vad detect input.wav` style invocation (no server). |
-| HuggingFace Inference Endpoint | 🟡 coming soon | Pushed images of each backend; pay-per-second hosted inference. |
-| Public API | 🟡 coming soon | accretional-hosted endpoint with auth + per-model routing. |
+| Go binary (`bin/vad`) | DONE; NEEDS PACKAGE RELEASE | Self-contained ~59 MB binary (darwin/arm64) bundling every backend's weights and the ORT dylib via `go:embed`. Runs as a gRPC server (`vad.VoiceSegmentation`); selectable backend via `-backend` or `VADConfig` textproto. See [Quickstart](#quickstart). |
+| Web server / standalone app (`cmd/basic-vad-web`) | DONE; NEEDS DEPLOYMENT| Three-process demo: vad gRPC + speax/audio gRPC + HTTP front. All VAD inference runs in the browser via onnxruntime-web; the demo server proxies `/fetch` for weights, `/upload` for arbitrary-container decoding, `/svg` for waveform rendering, and `/socket` for live mic → DetectStream bridging. See [Browser demo](#browser-demo-cmdbasic-vad-web). |
+| CLI | SOON | One-shot `vad detect input.wav` style invocation (no server). |
+| Client Libraries (Go, Python, C++, Java, etc.) | SOON | grpc (and http) client libraries for integration in other projects
+| HuggingFace Inference Endpoint | SOON | Pushed images of each backend; pay-per-second hosted inference. |
+| Public API | SOON | accretional-hosted endpoint |
 
 ## Quickstart
 
+### Native (macOS arm64 / Linux x86_64 dev box)
+
 ```bash
-bash setup.sh           # verifies deps; the bundled binary already has weights + ORT embedded
+bash setup.sh           # verifies deps; downloads ORT into third_party/ if missing
 bash build-native.sh    # produces ./bin/vad (~59 MB, self-contained)
 
 # Default backend (pyannote) on :50051:
@@ -91,6 +104,25 @@ bash build-native.sh    # produces ./bin/vad (~59 MB, self-contained)
 
 The ONNX Runtime dylib for the build target is embedded; no `ONNXRUNTIME_LIB` env var or `third_party/` needed at runtime. The on-disk fallback exists only for development.
 
+### Container
+
+```bash
+docker build -t vad .                          # multi-stage build; ~70 MB final image
+docker run -p 50051:50051 --rm vad             # default pyannote on :50051
+docker run -p 50051:50051 --rm vad -backend silero
+```
+
+The image is `debian:bookworm-slim` + the single self-contained binary — no separate weights volume or ORT mount. Validate end-to-end with `bash test.sh` (runs the per-backend matrix in `tests/e2e/`).
+
+### One-shot full test suite
+
+```bash
+bash test.sh   # go vet, all unit tests, in-process integration tests, the pkg-example pipeline,
+               # and (if docker is reachable) docker build + per-backend container e2e + fetch tests
+```
+
+Layers that need Docker or ffmpeg skip gracefully if those tools aren't installed.
+
 ### Browser demo (`cmd/basic-vad-web`)
 
 Multi-backend comparison demo where all VAD inference runs **in the browser** via `onnxruntime-web`. The server side is just a metadata + weights proxy:
@@ -106,12 +138,14 @@ Three processes: `bin/vad` (gRPC, weights + DetectStream), [`speax/audio`](https
 ## Repo layout
 
 - `pkg/vad/` — `Backend` interface + all 5 backend implementations.
-- `internal/server/` — gRPC service (`Detect`, `DetectStream`, `Fetch`).
-- `internal/embedded/` — `go:embed` indirection for the ORT dylib + per-backend weights.
+- `weights/<backend>/` — bundled ONNX weights for each backend plus a `url.txt` sidecar (CDN-style URL the `Fetch` RPC returns when present, so clients can pull from GitHub raw instead of streaming via the server).
 - `fbank/`, `melspec/` — log-Mel feature extractors (Kaldi and NeMo conventions).
+- `internal/server/` — gRPC service (`Detect`, `DetectStream`, `Fetch`) implementation in Go
+- `internal/embedded/` — `go:embed` indirection for the ORT dylib + per-backend weights.
 - `cmd/vad/` — the gRPC server binary.
 - `cmd/basic-vad-web/` — the browser-side multi-backend demo + HTTP front.
-- `weights/<backend>/` — bundled ONNX weights for each backend plus a `url.txt` sidecar (CDN-style URL the `Fetch` RPC returns when present, so clients can pull from GitHub raw instead of streaming via the server).
-- `tests/{e2e,fetch,stream,basic-vad-web}/` — integration tests; `tests/e2e` and `tests/fetch` are Docker-driven.
+- `cmd/pkg-example/` — minimal CLI that drives the `pkg/vad` interface over `data/*.mp3` (encode → detect → segment → re-encode).
+- `Dockerfile`, `build-native.sh`, `build.sh`, `setup.sh`, `test.sh`, `prep-embed.sh` — build / setup / test entry points (see header comments).
+- `tests/{e2e,fetch,stream,basic-vad-web}/` — integration tests; `tests/e2e` and `tests/fetch` are Docker-driven (e2e includes the per-backend matrix).
 - `docs/planning/original.md` — frozen snapshot of the original README development notes and plan.
 - [`TODO.md`](TODO.md) — outstanding work (streaming RPC improvements, backend abstraction, CI).
