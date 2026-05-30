@@ -1,0 +1,29 @@
+{
+  "shape_time_first": [
+    5316,
+    80
+  ],
+  "shape_channels_first": [
+    80,
+    5316
+  ],
+  "source_audio": "data/sorry-dave-16k.f32",
+  "out_len_frames": 5315,
+  "preprocessor": {
+    "sample_rate": 16000,
+    "n_window_size": 400,
+    "n_window_stride": 160,
+    "window": "hann",
+    "normalize": null,
+    "n_fft": 512,
+    "preemph": 0.97,
+    "nfilt": 80,
+    "lowfreq": 0,
+    "highfreq": 8000,
+    "log_zero_guard_value": 5.960464477539063e-08,
+    "log_zero_guard_type": "add",
+    "dither": 0,
+    "pad_to": 2,
+    "mel_norm": "slaney"
+  }
+}

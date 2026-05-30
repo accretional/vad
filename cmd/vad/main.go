@@ -240,7 +240,7 @@ func main() {
 	case pb.VADModel_VAD_MODEL_SILERO:
 		backend, err = vad.NewSilero(weightsDir)
 	case pb.VADModel_VAD_MODEL_MARBLENET:
-		log.Fatalf("backend %s not yet implemented (see TODO.md)", cfg.Model.String())
+		backend, err = vad.NewMarbleNet(weightsDir)
 	default:
 		log.Fatalf("unknown VADModel %v", cfg.Model)
 	}

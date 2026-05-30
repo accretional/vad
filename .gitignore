@@ -20,8 +20,9 @@ internal/embedded/weights/
 /vad
 third_party/
 *.f32
-# DO commit fbank parity-test fixtures (small, needed for `go test ./fbank` to work)
+# DO commit parity-test fixtures (small, needed for `go test ./fbank` / `./melspec` to work)
 !fbank/testdata/*.f32
+!melspec/testdata/*.f32
 cmd/pkg-example/pkg-example
 cmd/pkg-example/segmented-output/
 cmd/pkg-example/unsegmented-output/
