@@ -1,10 +1,21 @@
 # vad
 
-gRPC + ONNX voice-activity-detection service with **>200× realtime VAD throughput**, serving 5 SoTA ONNX VAD models via Go binding, container, gRPC, or in-browser through transformers.js / onnxruntime-web.
+High-throughput gRPC + go + ONNX Voice Activity Detection with CPU model serving
 
-The gRPC server binary (`bin/vad`, ~59 MB on darwin/arm64) bundles all 5 backends' ONNX weights and the ONNX Runtime dylib via `go:embed` into **a single self-contained binary**. Bidirectional streaming over WebSocket and gRPC supports **>100× realtime audio VAD processing per CPU core**, with the multi-backend comparison demo at [`cmd/basic-vad-web/`](cmd/basic-vad-web/) (`./cmd/basic-vad-web/run.sh` to launch locally).
+* **>200× realtime VAD throughput with CPU inference**
+* serves 5 SoTA VAD models via gRPC, container, go package, or self-contained binary file
+* High Throughput Go Voice AI inference stack, 4 ports PyTorth->ONNX, 1 port NeMo->ONNX
+* Realtime in-browser VAD through transformers.js / onnxruntime-web, can act as an ONNX model discovery service and model host to webGPU applications
+* Websocket interface for realtime remote VAD computed on CPUs; single-binary server or prebuilt container you can use to launch instantly
+
+<img width="1014" height="956" alt="Screenshot 2026-05-30 at 1 33 57 PM" src="https://github.com/user-attachments/assets/c89528f7-c038-4107-ae5c-4b6852362909" />
+
+# Overview
+
+The vad gRPC server binary (`bin/vad`, ~59 MB on darwin/arm64) bundles all 5 backends' ONNX weights and the ONNX Runtime dylib via `go:embed` into **a single self-contained binary**. Bidirectional streaming over WebSocket and gRPC supports **>100× realtime audio VAD processing per CPU core**, with the multi-backend comparison demo at [`cmd/basic-vad-web/`](cmd/basic-vad-web/) (`./cmd/basic-vad-web/run.sh` to launch locally).
 
 Models: **pyannote**, **fsmn**, **firered**, **silero**, and **marblenet** VAD all run from a unified ONNX path, with Kaldi- and NeMo-equivalent feature extractors in pure Go (`fbank/`, `melspec/`), parity-tested against the upstream PyTorch / NeMo references to within float32 round-off.
+
 
 All backends speak the same `vad.VoiceSegmentation` proto (`Detect` unary + `DetectStream` bidi streaming + `Fetch` for weights/URL handoff), so clients are backend-agnostic. As a gRPC service it natively supports client libraries in C++, Python, Go, Java, and other major language runtimes.
 
