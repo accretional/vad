@@ -20,10 +20,13 @@ model: VAD_MODEL_FIRERED
 # gRPC port; defaults to 50051 if 0/unset.
 port: 50051
 
-# ONNX Runtime shared library path. If empty, falls back to $ONNXRUNTIME_LIB.
+# ONNX Runtime shared library path. Usually leave blank — the server
+# auto-discovers libonnxruntime.{dylib,so} from third_party/ next to the
+# binary and from common system paths. Set explicitly to override.
 # onnxruntime_lib: "third_party/onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.dylib"
 
-# Pyannote-only: URL the Fetch RPC redirects clients to (e.g. for
-# transformers.js to grab the weights without round-tripping through this
-# server). Ignored for other backends.
+# Optional. URL the Fetch RPC returns to clients instead of the raw weight
+# bytes (e.g. for transformers.js to grab the .onnx directly from a CDN
+# instead of round-tripping through this server). Works for any backend, not
+# just pyannote.
 # weights_url: "https://huggingface.co/onnx-community/pyannote-segmentation-3.0/resolve/main/onnx/model.onnx"

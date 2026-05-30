@@ -128,12 +128,17 @@ message VADConfig {
   // gRPC port. Defaults to 50051 if 0.
   int32 port = 3;
 
-  // ONNX Runtime shared library path. Falls back to the ONNXRUNTIME_LIB env
-  // var if empty.
+  // ONNX Runtime shared library path. Most users can leave this unset — the
+  // server auto-discovers libonnxruntime.{dylib,so} from third_party/ next to
+  // the binary and from /usr/local/lib, /opt/homebrew/lib, etc. Set explicitly
+  // only to pin a specific version or location. Falls back to ONNXRUNTIME_LIB
+  // env var if neither is set.
   string onnxruntime_lib = 4;
 
-  // URL returned by Fetch RPC (only used for pyannote backend; informational
-  // for clients fetching weights for transformers.js).
+  // URL returned by the Fetch RPC instead of the raw weight bytes. Useful for
+  // browser clients (e.g. transformers.js) that prefer to download the .onnx
+  // directly from a CDN rather than round-trip through this server. Applies
+  // to every backend, not just pyannote.
   string weights_url = 5;
 }
 

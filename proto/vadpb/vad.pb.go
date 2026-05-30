@@ -493,11 +493,16 @@ type VADConfig struct {
 	WeightsDir string `protobuf:"bytes,2,opt,name=weights_dir,json=weightsDir,proto3" json:"weights_dir,omitempty"`
 	// gRPC port. Defaults to 50051 if 0.
 	Port int32 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
-	// ONNX Runtime shared library path. Falls back to the ONNXRUNTIME_LIB env
-	// var if empty.
+	// ONNX Runtime shared library path. Most users can leave this unset — the
+	// server auto-discovers libonnxruntime.{dylib,so} from third_party/ next to
+	// the binary and from /usr/local/lib, /opt/homebrew/lib, etc. Set explicitly
+	// only to pin a specific version or location. Falls back to ONNXRUNTIME_LIB
+	// env var if neither is set.
 	OnnxruntimeLib string `protobuf:"bytes,4,opt,name=onnxruntime_lib,json=onnxruntimeLib,proto3" json:"onnxruntime_lib,omitempty"`
-	// URL returned by Fetch RPC (only used for pyannote backend; informational
-	// for clients fetching weights for transformers.js).
+	// URL returned by the Fetch RPC instead of the raw weight bytes. Useful for
+	// browser clients (e.g. transformers.js) that prefer to download the .onnx
+	// directly from a CDN rather than round-trip through this server. Applies
+	// to every backend, not just pyannote.
 	WeightsUrl    string `protobuf:"bytes,5,opt,name=weights_url,json=weightsUrl,proto3" json:"weights_url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

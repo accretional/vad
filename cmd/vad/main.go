@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 
 	"google.golang.org/grpc"
@@ -18,6 +19,70 @@ import (
 	"github.com/accretional/vad/pkg/vad"
 	pb "github.com/accretional/vad/proto/vadpb"
 )
+
+// discoverOnnxRuntime looks for libonnxruntime.{dylib,so} in conventional
+// locations so users don't have to pass -lib or set ONNXRUNTIME_LIB explicitly.
+// Returns "" if nothing is found.
+func discoverOnnxRuntime() string {
+	var libName string
+	switch runtime.GOOS {
+	case "darwin":
+		libName = "libonnxruntime.dylib"
+	case "linux":
+		libName = "libonnxruntime.so"
+	default:
+		return ""
+	}
+	candidates := []string{}
+	// 1. Bundled under third_party/ relative to the executable (matches what
+	//    setup.sh installs).
+	if exe, err := os.Executable(); err == nil {
+		for _, base := range []string{filepath.Dir(exe), filepath.Dir(filepath.Dir(exe))} {
+			matches, _ := filepath.Glob(filepath.Join(base, "third_party", "onnxruntime-*", "lib", libName))
+			candidates = append(candidates, matches...)
+		}
+	}
+	// 2. Also try ./third_party from cwd (covers running from repo root).
+	if matches, _ := filepath.Glob(filepath.Join("third_party", "onnxruntime-*", "lib", libName)); len(matches) > 0 {
+		candidates = append(candidates, matches...)
+	}
+	// 3. System install locations.
+	candidates = append(candidates,
+		"/usr/local/lib/"+libName,
+		"/opt/homebrew/lib/"+libName,
+		"/usr/lib/"+libName,
+		"/usr/lib/x86_64-linux-gnu/"+libName,
+		"/usr/lib/aarch64-linux-gnu/"+libName,
+	)
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
+}
+
+// resolveModelPath picks the on-disk file to serve via the Fetch RPC. For
+// pyannote, weights_dir is itself the .onnx file. For multi-file backends,
+// the canonical entrypoint is `<weights_dir>/model.onnx`. Returns "" if the
+// path doesn't resolve to an existing file (Fetch will then return an error).
+func resolveModelPath(weightsDir string) string {
+	if weightsDir == "" {
+		return ""
+	}
+	st, err := os.Stat(weightsDir)
+	if err != nil {
+		return ""
+	}
+	if !st.IsDir() {
+		return weightsDir
+	}
+	candidate := filepath.Join(weightsDir, "model.onnx")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return ""
+}
 
 // defaultWeightsDir returns the on-disk path the server reaches for if
 // VADConfig.weights_dir is unset.
@@ -110,8 +175,11 @@ func main() {
 		cfg.OnnxruntimeLib = os.Getenv("ONNXRUNTIME_LIB")
 	}
 	if cfg.OnnxruntimeLib == "" {
-		log.Fatal("ONNX Runtime library path required: set -lib flag, ONNXRUNTIME_LIB env, " +
-			"or onnxruntime_lib in -config")
+		cfg.OnnxruntimeLib = discoverOnnxRuntime()
+	}
+	if cfg.OnnxruntimeLib == "" {
+		log.Fatal("Could not find libonnxruntime.{dylib,so}. Pass -lib, set ONNXRUNTIME_LIB, " +
+			"set onnxruntime_lib in -config, or run setup.sh to install it under third_party/.")
 	}
 	if cfg.WeightsDir == "" {
 		cfg.WeightsDir = defaultWeightsDir(cfg.Model)
@@ -123,13 +191,11 @@ func main() {
 	defer vad.DestroyONNXRuntime()
 
 	var (
-		backend      vad.Backend
-		pyannotePath string
-		err          error
+		backend vad.Backend
+		err     error
 	)
 	switch cfg.Model {
 	case pb.VADModel_VAD_MODEL_PYANNOTE:
-		pyannotePath = cfg.WeightsDir
 		backend, err = vad.NewModel(cfg.WeightsDir)
 	case pb.VADModel_VAD_MODEL_FSMN:
 		backend, err = vad.NewFSMN(cfg.WeightsDir)
@@ -145,9 +211,10 @@ func main() {
 	}
 	defer backend.Close()
 
-	if cfg.Model != pb.VADModel_VAD_MODEL_PYANNOTE && cfg.WeightsUrl != "" {
-		log.Printf("warning: weights_url is currently only used by the pyannote backend's Fetch RPC")
-	}
+	// Fetch RPC: serve whatever ONNX file backs the loaded model. Generalized
+	// from the original pyannote-only behaviour — any backend can have its
+	// weights pulled by clients (e.g. transformers.js).
+	modelFile := resolveModelPath(cfg.WeightsDir)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {
@@ -158,7 +225,7 @@ func main() {
 		grpc.MaxSendMsgSize(32*1024*1024),
 		grpc.MaxRecvMsgSize(32*1024*1024),
 	)
-	pb.RegisterVoiceSegmentationServer(grpcServer, server.New(backend, pyannotePath, cfg.WeightsUrl))
+	pb.RegisterVoiceSegmentationServer(grpcServer, server.New(backend, modelFile, cfg.WeightsUrl))
 	reflection.Register(grpcServer)
 
 	go func() {
