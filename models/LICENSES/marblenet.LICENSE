@@ -1,0 +1,31 @@
+NVIDIA Open Model License Agreement
+
+This model (Frame_VAD_Multilingual_MarbleNet_v2.0) is distributed under
+the NVIDIA Open Model License Agreement.
+
+The canonical, authoritative text of the license lives at:
+
+    https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license
+
+(NVIDIA hosts it as an HTML page rather than a static text file, which
+is why we point at the URL rather than reproducing the full text inline.
+Any redistributor MUST consult the current version at that URL — terms
+may be updated by NVIDIA.)
+
+KEY OBLIGATIONS FOR REDISTRIBUTORS
+==================================
+
+1. Distribute a copy of (or a link to) this license with any
+   distribution of the model or derivative works.
+
+2. Provide attribution to NVIDIA — see ../marblenet/NOTICE.md for the
+   minimum attribution text we include.
+
+3. Comply with the Acceptable Use restrictions described in the license
+   (e.g. no use for misinformation, illegal activity, etc.).
+
+4. Preserve any notices in the model card / weights.
+
+See also:
+- Source model card: https://huggingface.co/nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0
+- ../marblenet/NOTICE.md — our attribution + provenance record.

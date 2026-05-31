@@ -1,0 +1,11 @@
+FunASR FSMN-VAD is distributed under the Apache License, Version 2.0.
+
+The canonical text of the license is at ./apache-2.0.txt in this directory
+(and at https://www.apache.org/licenses/LICENSE-2.0).
+
+No upstream NOTICE file ships with the model; standard Apache-2.0
+attribution applies. See ../fsmn-vad/NOTICE.md for our attribution
+record.
+
+Source: https://huggingface.co/funasr/fsmn-vad
+Upstream project: https://github.com/modelscope/FunASR (Alibaba DAMO Academy)
